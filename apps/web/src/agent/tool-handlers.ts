@@ -1,0 +1,520 @@
+/**
+ * MemoBot tool handlers: execute agent tools with user/session context (PLAN.md).
+ */
+
+import Anthropic from "@anthropic-ai/sdk";
+import { createServerSupabase } from "../lib/supabase/server";
+import { generateEmbedding } from "../lib/services/embedding";
+import { assignCategory, previewCategory, incrementCategoryMemoryCount } from "../lib/services/categorizer";
+import {
+  extractAndAssignTags,
+  getOrCreateTags,
+  previewTags,
+} from "../lib/services/tagger";
+import { findRelatedMemories, createRelationships } from "../lib/services/relationship";
+import { syncMemoryToStorage } from "../lib/services/sync";
+import {
+  RAG_NETWORK_DEFAULTS,
+  RAG_SEMANTIC_DEFAULTS,
+  RAG_CONTEXT_DEFAULTS,
+} from "../lib/rag-config";
+
+const anthropic = new Anthropic();
+
+export interface ToolContext {
+  userId: string;
+  sessionId: string;
+  platform: "whatsapp" | "telegram" | "web";
+}
+
+async function generateTitleAndSummary(content: string): Promise<{ title: string; summary: string }> {
+  const msg = await anthropic.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 256,
+    messages: [
+      {
+        role: "user",
+        content: `Given this memory content, respond with exactly two short lines:\nLine 1: A brief title (max 8 words).\nLine 2: A one-sentence summary (max 25 words).\n\nContent:\n${content.slice(0, 2000)}`,
+      },
+    ],
+  });
+  const text =
+    (msg.content.find((b) => b.type === "text") as { type: "text"; text: string } | undefined)?.text ??
+    "";
+  const lines = text.trim().split("\n").map((l) => l.trim()).filter(Boolean);
+  const title = lines[0]?.replace(/^title:?\s*/i, "").slice(0, 100) || "Untitled";
+  const summary = lines[1]?.replace(/^summary:?\s*/i, "").slice(0, 200) || content.slice(0, 150);
+  return { title, summary };
+}
+
+export async function handleToolCall(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  context: ToolContext
+): Promise<unknown> {
+  const { userId, sessionId } = context;
+  const supabase = createServerSupabase();
+
+  await supabase.rpc("set_current_user_id", { user_id: userId });
+
+  switch (toolName) {
+    case "search_memories": {
+      const query = String(toolInput.query ?? "");
+      const limit = Math.min(10, Number(toolInput.limit) || RAG_NETWORK_DEFAULTS.initialCount);
+      const includeRelated = toolInput.include_related !== false;
+      const embedding = await generateEmbedding(query);
+
+      if (includeRelated) {
+        const { data } = await supabase.rpc("get_memory_network", {
+          p_user_id: userId,
+          query_embedding: embedding,
+          initial_count: limit,
+          related_count: RAG_NETWORK_DEFAULTS.relatedCount,
+          similarity_threshold: RAG_NETWORK_DEFAULTS.similarityThreshold,
+        });
+        return formatMemoryResults((data ?? []) as MemoryNetworkRow[]);
+      }
+      const { data } = await supabase.rpc("match_memories", {
+        p_user_id: userId,
+        query_embedding: embedding,
+        match_count: limit,
+        match_threshold: RAG_SEMANTIC_DEFAULTS.matchThreshold,
+      });
+      return formatMemoryResultsFromMatch((data ?? []) as MatchMemoryRow[]);
+    }
+
+    case "get_memory_by_id": {
+      const memoryId = String(toolInput.memory_id ?? "");
+      const { data, error } = await supabase
+        .from("memories")
+        .select(
+          `
+          *,
+          category:categories(name),
+          memory_tags(tag:tags(name))
+        `
+        )
+        .eq("user_id", userId)
+        .eq("id", memoryId)
+        .is("deleted_at", null)
+        .single();
+      if (error || !data) return { error: "Memory not found" };
+      return formatSingleMemory(data as MemoryWithRelations);
+    }
+
+    case "list_recent_memories": {
+      const limit = Math.min(20, Math.max(1, Number(toolInput.limit) || 5));
+      const categoryName = toolInput.category ? String(toolInput.category) : undefined;
+      let categoryId: string | null = null;
+      if (categoryName) {
+        const { data: cat } = await supabase
+          .from("categories")
+          .select("id")
+          .eq("user_id", userId)
+          .ilike("name", categoryName)
+          .limit(1)
+          .maybeSingle();
+        categoryId = cat?.id ?? null;
+      }
+      let q = supabase
+        .from("memories")
+        .select(
+          "id, title, summary, created_at, category_id, category:categories(name), memory_tags(tag:tags(name))"
+        )
+        .eq("user_id", userId)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      if (categoryId) q = q.eq("category_id", categoryId);
+      const { data } = await q;
+      return formatMemoryList((data ?? []) as unknown as MemoryListRow[]);
+    }
+
+    case "list_categories": {
+      const { data } = await supabase
+        .from("categories")
+        .select("name, description, memory_count")
+        .eq("user_id", userId)
+        .order("memory_count", { ascending: false });
+      return { categories: data ?? [] };
+    }
+
+    case "list_tags": {
+      const limit = Math.min(50, Math.max(1, Number(toolInput.limit) || 20));
+      const { data } = await supabase
+        .from("tags")
+        .select("name, usage_count")
+        .eq("user_id", userId)
+        .order("usage_count", { ascending: false })
+        .limit(limit);
+      return { tags: data ?? [] };
+    }
+
+    case "start_memory_capture": {
+      const initialContent = toolInput.initial_content ? String(toolInput.initial_content) : undefined;
+      await supabase
+        .from("conversation_sessions")
+        .update({
+          current_state: "MEMORY_CAPTURE",
+          memory_draft: {
+            content_parts: initialContent ? [initialContent] : [],
+            started_at: new Date().toISOString(),
+            enrichment_count: 0,
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", sessionId);
+      return {
+        status: "capture_started",
+        message: initialContent
+          ? "Got it! Can you tell me more about this?"
+          : "What would you like to remember?",
+      };
+    }
+
+    case "add_to_memory_draft": {
+      const content = String(toolInput.content ?? "");
+      const isAnswer = Boolean(toolInput.is_answer_to_question);
+      const { data: session } = await supabase
+        .from("conversation_sessions")
+        .select("memory_draft")
+        .eq("id", sessionId)
+        .single();
+      const draft = (session?.memory_draft as DraftShape | null) ?? { content_parts: [], enrichment_count: 0 };
+      const parts = Array.isArray(draft.content_parts) ? [...draft.content_parts, content] : [content];
+      const enrichmentCount = (draft.enrichment_count ?? 0) + (isAnswer ? 1 : 0);
+      await supabase
+        .from("conversation_sessions")
+        .update({
+          memory_draft: { ...draft, content_parts: parts, enrichment_count: enrichmentCount },
+          current_state: "MEMORY_ENRICHMENT",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", sessionId);
+      return { status: "content_added", enrichment_count: enrichmentCount, total_parts: parts.length };
+    }
+
+    case "generate_memory_draft": {
+      const { data: session } = await supabase
+        .from("conversation_sessions")
+        .select("memory_draft")
+        .eq("id", sessionId)
+        .single();
+      const draft = session?.memory_draft as DraftShape | null;
+      const parts = draft?.content_parts;
+      if (!Array.isArray(parts) || parts.length === 0) return { error: "No content captured yet" };
+      const fullContent = parts.join("\n\n");
+
+      const { title, summary } = await generateTitleAndSummary(fullContent);
+
+      const { data: categories } = await supabase
+        .from("categories")
+        .select("id, name, embedding")
+        .eq("user_id", userId);
+      const categoryPreview = await previewCategory(
+        fullContent,
+        (categories ?? []) as { id: string; name: string; embedding?: number[] | null }[]
+      );
+
+      const { data: tagsData } = await supabase.from("tags").select("name").eq("user_id", userId);
+      const tagsPreview = previewTags(
+        fullContent,
+        (tagsData ?? []) as { name: string }[],
+        5
+      );
+
+      await supabase
+        .from("conversation_sessions")
+        .update({
+          current_state: "MEMORY_DRAFT",
+          memory_draft: {
+            ...draft,
+            content_parts: parts,
+            title,
+            summary,
+            full_content: fullContent,
+            preview_category: categoryPreview,
+            preview_tags: tagsPreview,
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", sessionId);
+
+      return {
+        status: "draft_ready",
+        draft: {
+          title,
+          summary,
+          content_preview:
+            fullContent.slice(0, 200) + (fullContent.length > 200 ? "..." : ""),
+          category: categoryPreview,
+          tags: tagsPreview,
+        },
+      };
+    }
+
+    case "finalize_memory": {
+      const titleOverride = toolInput.title ? String(toolInput.title) : undefined;
+      const categoryOverride = toolInput.category_override
+        ? String(toolInput.category_override)
+        : undefined;
+      const tagsOverride = Array.isArray(toolInput.tags_override)
+        ? (toolInput.tags_override as string[])
+        : undefined;
+
+      const { data: session } = await supabase
+        .from("conversation_sessions")
+        .select("memory_draft")
+        .eq("id", sessionId)
+        .single();
+      const draft = session?.memory_draft as DraftShape | null;
+      const fullContent = draft?.full_content;
+      if (!fullContent) return { error: "No draft to finalize" };
+
+      const embedding = await generateEmbedding(fullContent);
+      const category = await assignCategory(
+        userId,
+        categoryOverride ?? fullContent
+      );
+      const tags = tagsOverride
+        ? await getOrCreateTags(userId, tagsOverride)
+        : await extractAndAssignTags(userId, fullContent);
+
+      const { data: memory, error: memError } = await supabase
+        .from("memories")
+        .insert({
+          user_id: userId,
+          title: titleOverride ?? (draft.title as string) ?? "Untitled",
+          content: fullContent,
+          summary: (draft.summary as string) ?? null,
+          embedding,
+          category_id: category.id,
+          source_platform: context.platform,
+        })
+        .select()
+        .single();
+
+      if (memError) return { error: "Failed to save memory" };
+
+      await supabase.from("memory_tags").insert(
+        tags.map((t) => ({ memory_id: memory.id, tag_id: t.id }))
+      );
+
+      const related = await findRelatedMemories(userId, memory.id, embedding);
+      await createRelationships(memory.id, related);
+      await incrementCategoryMemoryCount(userId, category.id);
+      syncMemoryToStorage(userId, memory, category, tags).catch(() => {});
+
+      await supabase
+        .from("conversation_sessions")
+        .update({
+          current_state: "CONVERSATION",
+          memory_draft: {},
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", sessionId);
+
+      return {
+        status: "memory_saved",
+        memory: {
+          id: memory.id,
+          title: memory.title,
+          category: category.name,
+          tags: tags.map((t) => t.name),
+          related_count: related.length,
+        },
+      };
+    }
+
+    case "cancel_memory_draft": {
+      await supabase
+        .from("conversation_sessions")
+        .update({
+          current_state: "CONVERSATION",
+          memory_draft: {},
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", sessionId);
+      return { status: "draft_cancelled" };
+    }
+
+    case "update_memory": {
+      const memoryId = String(toolInput.memory_id ?? "");
+      const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      if (toolInput.title !== undefined) updates.title = toolInput.title;
+      if (toolInput.summary !== undefined) updates.summary = toolInput.summary;
+      if (toolInput.content !== undefined) {
+        updates.content = toolInput.content;
+        updates.embedding = await generateEmbedding(String(toolInput.content));
+      }
+      if (toolInput.category !== undefined) {
+        const cat = await assignCategory(userId, String(toolInput.category));
+        updates.category_id = cat.id;
+      }
+      if (Array.isArray(toolInput.tags)) {
+        const tagRows = await getOrCreateTags(userId, toolInput.tags as string[]);
+        await supabase.from("memory_tags").delete().eq("memory_id", memoryId);
+        if (tagRows.length)
+          await supabase
+            .from("memory_tags")
+            .insert(tagRows.map((t) => ({ memory_id: memoryId, tag_id: t.id })));
+      }
+      const { error } = await supabase
+        .from("memories")
+        .update(updates)
+        .eq("id", memoryId)
+        .eq("user_id", userId);
+      if (error) return { error: "Failed to update memory" };
+      return { status: "memory_updated" };
+    }
+
+    case "delete_memory": {
+      const memoryId = String(toolInput.memory_id ?? "");
+      const { error } = await supabase
+        .from("memories")
+        .update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq("id", memoryId)
+        .eq("user_id", userId);
+      if (error) return { error: "Failed to delete memory" };
+      return { status: "memory_deleted" };
+    }
+
+    case "get_session_state": {
+      const { data: sess } = await supabase
+        .from("conversation_sessions")
+        .select("current_state, memory_draft")
+        .eq("id", sessionId)
+        .single();
+      const d = sess?.memory_draft as DraftShape | null;
+      const parts = d?.content_parts;
+      return {
+        state: sess?.current_state ?? "CONVERSATION",
+        has_draft: Array.isArray(parts) && parts.length > 0,
+        draft_parts: Array.isArray(parts) ? parts.length : 0,
+      };
+    }
+
+    case "set_session_state": {
+      const state = String(toolInput.state ?? "");
+      await supabase
+        .from("conversation_sessions")
+        .update({
+          current_state: state,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", sessionId);
+      return { status: "state_updated", new_state: state };
+    }
+
+    default:
+      return { error: `Unknown tool: ${toolName}` };
+  }
+}
+
+// --- types and formatters ---
+
+interface DraftShape {
+  content_parts?: string[];
+  enrichment_count?: number;
+  title?: string;
+  summary?: string;
+  full_content?: string;
+  preview_category?: string;
+  preview_tags?: string[];
+}
+
+interface MemoryNetworkRow {
+  id: string;
+  title: string | null;
+  content: string;
+  degree?: number;
+  relevance_score?: number;
+  created_at?: string;
+}
+
+interface MatchMemoryRow {
+  id: string;
+  title: string | null;
+  content: string;
+  similarity?: number;
+  created_at?: string;
+}
+
+interface MemoryWithRelations {
+  id: string;
+  title: string | null;
+  content: string;
+  summary: string | null;
+  created_at: string;
+  category?: { name: string } | null;
+  memory_tags?: { tag: { name: string } }[];
+}
+
+interface MemoryListRow {
+  id: string;
+  title: string | null;
+  summary: string | null;
+  created_at: string;
+  category?: { name: string } | { name: string }[] | null;
+  memory_tags?: { tag: { name: string } | { name: string }[] }[];
+}
+
+const CONTENT_PREVIEW_LEN = RAG_CONTEXT_DEFAULTS.contentPreviewLength;
+
+function formatMemoryResults(rows: MemoryNetworkRow[]): unknown {
+  if (!rows?.length) return { memories: [], message: "No memories found" };
+  return {
+    memories: rows.map((m) => ({
+      id: m.id,
+      title: m.title,
+      content_preview: m.content?.slice(0, CONTENT_PREVIEW_LEN) + (m.content && m.content.length > CONTENT_PREVIEW_LEN ? "..." : ""),
+      degree: m.degree,
+      relevance: m.relevance_score,
+    })),
+  };
+}
+
+function formatMemoryResultsFromMatch(rows: MatchMemoryRow[]): unknown {
+  if (!rows?.length) return { memories: [], message: "No memories found" };
+  return {
+    memories: rows.map((m) => ({
+      id: m.id,
+      title: m.title,
+      content_preview: m.content?.slice(0, CONTENT_PREVIEW_LEN) + (m.content && m.content.length > CONTENT_PREVIEW_LEN ? "..." : ""),
+      similarity: m.similarity,
+    })),
+  };
+}
+
+function formatSingleMemory(data: MemoryWithRelations): unknown {
+  return {
+    id: data.id,
+    title: data.title,
+    content: data.content,
+    summary: data.summary,
+    category: data.category?.name ?? null,
+    tags: (data.memory_tags ?? []).map((t) => t.tag?.name).filter(Boolean),
+    created_at: data.created_at,
+  };
+}
+
+function formatMemoryList(rows: MemoryListRow[]): unknown {
+  return {
+    memories: (rows ?? []).map((m) => {
+      const cat = m.category;
+      const categoryName = Array.isArray(cat) ? cat[0]?.name : cat?.name;
+      const tags = (m.memory_tags ?? []).map((t) => {
+        const tag = t.tag;
+        return Array.isArray(tag) ? tag[0]?.name : tag?.name;
+      }).filter(Boolean);
+      return {
+        id: m.id,
+        title: m.title,
+        summary: m.summary,
+        category: categoryName ?? null,
+        tags,
+        created_at: m.created_at,
+      };
+    }),
+  };
+}

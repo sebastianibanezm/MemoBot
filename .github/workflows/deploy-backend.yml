@@ -1,0 +1,26 @@
+# Phase 9: Deploy backend to Railway (PLAN.md).
+# Runs only when apps/api or packages/shared change. MemoBot currently uses
+# Next.js API routes (apps/web); add apps/api when splitting backend.
+
+name: Deploy Backend to Railway
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/api/**"
+      - "packages/shared/**"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy to Railway
+        run: railway up --service api
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}

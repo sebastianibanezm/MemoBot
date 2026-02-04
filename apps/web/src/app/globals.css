@@ -1,0 +1,320 @@
+@import "tailwindcss";
+
+/* ============================================
+   TECH-NOIR DYSTOPIAN THEME
+   Off-white backgrounds, amber accents, CRT effects
+   ============================================ */
+
+:root {
+  /* Core palette - Black theme */
+  --background: #000000;
+  --background-alt: #0a0a0a;
+  --foreground: #e8e4db;
+  --foreground-muted: #c4c0b8;
+  
+  /* Accent colors - Dark neon green */
+  --accent: #00b34a;
+  --accent-dark: #009940;
+  --accent-muted: rgba(0, 179, 74, 0.15);
+  
+  /* Card styling */
+  --card: rgba(10, 10, 10, 0.8);
+  --card-hover: rgba(20, 20, 20, 0.9);
+  --card-border: rgba(0, 179, 74, 0.15);
+  --card-border-hover: rgba(0, 179, 74, 0.3);
+  
+  /* Muted/secondary */
+  --muted: #9a958c;
+  --muted-light: #7a756c;
+  
+  /* Effects */
+  --glow: 0 0 8px rgba(0, 179, 74, 0.4);
+  --glow-strong: 0 0 16px rgba(0, 179, 74, 0.6);
+  
+  /* Scanline color */
+  --scanline: rgba(255, 255, 255, 0.02);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-background-alt: var(--background-alt);
+  --color-foreground: var(--foreground);
+  --color-accent: var(--accent);
+  --color-accent-dark: var(--accent-dark);
+  --color-accent-muted: var(--accent-muted);
+  --color-card: var(--card);
+  --color-card-hover: var(--card-hover);
+  --color-muted: var(--muted);
+  --font-sans: var(--font-ibm-plex-mono);
+  --font-mono: var(--font-ibm-plex-mono);
+  --font-display: var(--font-bebas-neue);
+}
+
+/* ============================================
+   BASE STYLES
+   ============================================ */
+
+body {
+  background: transparent;
+  color: var(--foreground);
+  font-family: var(--font-sans), "IBM Plex Mono", monospace;
+  position: relative;
+}
+
+html {
+  background: var(--background);
+}
+
+/* ============================================
+   CRT SCANLINES OVERLAY
+   ============================================ */
+
+.crt-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.crt-overlay::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    var(--scanline) 0px,
+    var(--scanline) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  pointer-events: none;
+}
+
+/* Subtle screen flicker */
+.crt-overlay::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  animation: flicker 8s infinite;
+  pointer-events: none;
+}
+
+@keyframes flicker {
+  0%, 97%, 100% { opacity: 0; }
+  97.5% { opacity: 0.02; background: var(--foreground); }
+  98% { opacity: 0; }
+  98.5% { opacity: 0.015; background: var(--foreground); }
+}
+
+/* ============================================
+   GLITCH TEXT EFFECT
+   ============================================ */
+
+.glitch-text {
+  position: relative;
+  animation: glitch-skew 4s infinite linear alternate-reverse;
+}
+
+.glitch-text::before,
+.glitch-text::after {
+  content: attr(data-text);
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.glitch-text::before {
+  color: #00d4ff;
+  animation: glitch-1 3s infinite linear alternate-reverse;
+  clip-path: polygon(0 0, 100% 0, 100% 35%, 0 35%);
+}
+
+.glitch-text::after {
+  color: #ff0080;
+  animation: glitch-2 2s infinite linear alternate-reverse;
+  clip-path: polygon(0 65%, 100% 65%, 100% 100%, 0 100%);
+}
+
+@keyframes glitch-skew {
+  0%, 87%, 100% { transform: skew(0deg); }
+  88% { transform: skew(0.5deg); }
+  89% { transform: skew(-0.3deg); }
+  90% { transform: skew(0.2deg); }
+}
+
+@keyframes glitch-1 {
+  0%, 85%, 100% { transform: translate(0); }
+  86% { transform: translate(-3px, 0); }
+  87% { transform: translate(2px, 0); }
+  88% { transform: translate(-1px, 0); }
+}
+
+@keyframes glitch-2 {
+  0%, 90%, 100% { transform: translate(0); }
+  91% { transform: translate(2px, 0); }
+  92% { transform: translate(-2px, 0); }
+  93% { transform: translate(1px, 0); }
+}
+
+/* Subtle glitch on hover for cards */
+.glitch-hover:hover {
+  animation: glitch-shake 0.3s ease;
+}
+
+@keyframes glitch-shake {
+  0%, 100% { transform: translate(0); }
+  20% { transform: translate(-1px, 1px); }
+  40% { transform: translate(1px, -1px); }
+  60% { transform: translate(-1px, 0); }
+  80% { transform: translate(1px, 0); }
+}
+
+/* ============================================
+   TERMINAL TEXT EFFECT
+   ============================================ */
+
+.terminal-text {
+  font-family: var(--font-mono), monospace;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.terminal-cursor::after {
+  content: "_";
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+/* ============================================
+   UTILITY CLASSES
+   ============================================ */
+
+/* Card base style */
+.card-dystopian {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 0.25rem;
+  transition: all 0.2s ease;
+}
+
+.card-dystopian:hover {
+  background: var(--card-hover);
+  border-color: var(--card-border-hover);
+  box-shadow: var(--glow);
+}
+
+/* Accent button - outline style */
+.btn-accent {
+  background: transparent;
+  color: var(--accent);
+  font-weight: 500;
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.25rem;
+  border: 1px solid var(--accent);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.875rem;
+}
+
+.btn-accent:hover {
+  background: var(--accent-muted);
+  box-shadow: var(--glow);
+  border-color: var(--accent);
+}
+
+/* Outline button */
+.btn-outline {
+  background: transparent;
+  color: var(--accent);
+  font-weight: 500;
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.25rem;
+  border: 1px solid var(--accent);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.875rem;
+}
+
+.btn-outline:hover {
+  background: var(--accent-muted);
+  box-shadow: var(--glow);
+}
+
+/* Link accent */
+.link-accent {
+  color: var(--accent-dark);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.link-accent:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* Badge/tag styles */
+.badge {
+  display: inline-block;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 0.125rem;
+  background: var(--accent-muted);
+  color: var(--accent-dark);
+  border: 1px solid var(--accent);
+}
+
+.badge-muted {
+  background: var(--background-alt);
+  color: var(--muted);
+  border: 1px solid var(--card-border);
+}
+
+/* ============================================
+   SCROLLBAR STYLING
+   ============================================ */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--background-alt);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--muted-light);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+/* ============================================
+   SELECTION STYLING
+   ============================================ */
+
+::selection {
+  background: var(--accent);
+  color: var(--background);
+}
+
+::-moz-selection {
+  background: var(--accent);
+  color: var(--background);
+}
