@@ -271,6 +271,37 @@ Run from `apps/web`: **`npm run test`** — runs build, server, health phase 9, 
 
 ---
 
+## Web Chat Interface — Completed
+
+### Chat API
+- [x] **POST /api/chat** (`src/app/api/chat/route.ts`): Authenticated endpoint for web chat; accepts `{ message: string }`, gets/creates session for platform `"web"`, calls `processMessage()` from orchestrator, updates session history, returns `{ reply: string }`
+
+### ChatInterface Component
+- [x] **ChatInterface** (`src/components/ChatInterface.tsx`): Full chat UI with:
+  - Looping video background (`/images/BG_video.mp4`)
+  - Gradient overlay for text readability
+  - Initial greeting: "How can I help you today?"
+  - Message display area with user/assistant message styling
+  - Loading indicator with animated dots
+  - Text input with terminal-style prompt
+  - Cyberpunk theme matching existing design
+
+### Dashboard Integration
+- [x] **Dashboard page** (`src/app/dashboard/page.tsx`): Added ChatInterface component before existing dashboard cards; updated header text to reflect chat capability
+
+### Agent Capabilities
+- The existing agent tools already support both memory creation and querying:
+  - **Memory creation**: `start_memory_capture`, `add_to_memory_draft`, `generate_memory_draft`, `finalize_memory`
+  - **Memory querying**: `search_memories`, `get_memory_by_id`, `list_recent_memories`, `list_categories`, `list_tags`
+- The system prompt handles intent detection automatically
+
+### Validation
+- [x] **Build:** `npm run build` passes with new `/api/chat` route listed
+- [x] **Auth:** `/api/chat` is protected by Clerk middleware (not in public routes)
+- [x] No linter errors in new/modified files
+
+---
+
 ## Validation log
 
 - **2025-02-03:** Ran `npm run test` from `apps/web` — all Phase 1–9 validation tests passed (build, health phase 9, auth redirects, protected APIs, Telegram/WhatsApp webhook checks, sync/process 401, pr-checks.yml present).

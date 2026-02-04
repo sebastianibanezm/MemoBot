@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import ChatInterface from "@/components/ChatInterface";
 
 const dashboardCards = [
   {
@@ -31,7 +34,7 @@ export default function DashboardPage() {
   return (
     <div className="p-6 pb-20 max-w-4xl mx-auto">
       {/* Header */}
-      <div className="mb-8">
+      <div className="mb-6">
         <h1 
           className="text-3xl font-display tracking-widest text-[var(--foreground)] mb-2"
           style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
@@ -39,8 +42,13 @@ export default function DashboardPage() {
           MEMORY VAULT
         </h1>
         <p className="text-[var(--muted)] text-sm tracking-wider">
-          <span className="text-[var(--accent)]">&gt;</span> Your personal archive. View memories, browse by category or tag, and explore the relationship graph.
+          <span className="text-[var(--accent)]">&gt;</span> Your personal archive. Chat with MemoBot to create or recall memories.
         </p>
+      </div>
+
+      {/* Chat Interface */}
+      <div className="mb-8">
+        <ChatInterface />
       </div>
 
       {/* Dashboard Grid */}

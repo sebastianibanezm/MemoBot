@@ -3,8 +3,48 @@
  * Uses embedding similarity to match existing categories; creates new if needed.
  */
 
+import OpenAI from "openai";
 import { createServerSupabase } from "../supabase/server";
 import { generateEmbedding } from "./embedding";
+
+function getOpenAIClient(): OpenAI {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is not set.");
+  }
+  return new OpenAI({ apiKey });
+}
+
+/**
+ * Use AI to suggest a category name for the given content.
+ */
+async function suggestCategoryName(content: string): Promise<string> {
+  try {
+    const openai = getOpenAIClient();
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      max_tokens: 50,
+      messages: [
+        {
+          role: "system",
+          content: `You categorize content into meaningful categories. Return ONLY a single category name (1-3 words, title case). Examples: "Personal", "Work", "Family", "Health", "Travel", "Finance", "Legal Documents", "Goals", "Ideas", "Learning".`,
+        },
+        {
+          role: "user",
+          content: `What category best describes this content?\n\n${content.slice(0, 1000)}`,
+        },
+      ],
+    });
+    
+    const suggested = response.choices[0]?.message?.content?.trim() ?? "";
+    // Clean up the response - remove quotes, extra punctuation
+    const cleaned = suggested.replace(/["']/g, "").replace(/[.!?]$/, "").trim();
+    return cleaned.length > 0 && cleaned.length <= 50 ? cleaned : "Personal";
+  } catch (error) {
+    console.error("Failed to suggest category with AI:", error);
+    return "Personal";
+  }
+}
 
 export interface CategoryMatch {
   id: string;
@@ -45,12 +85,16 @@ export async function assignCategory(
     .eq("user_id", userId);
 
   if (!categories?.length) {
-    return getOrCreateCategoryByName(userId, DEFAULT_CATEGORY_NAME);
+    // No categories exist, use AI to suggest one
+    const suggested = await suggestCategoryName(trimmed);
+    return getOrCreateCategoryByName(userId, suggested);
   }
 
   const withEmbedding = categories.filter((c) => c.embedding && Array.isArray(c.embedding));
   if (withEmbedding.length === 0) {
-    return getOrCreateCategoryByName(userId, DEFAULT_CATEGORY_NAME);
+    // Categories exist but none have embeddings, use AI to suggest
+    const suggested = await suggestCategoryName(trimmed);
+    return getOrCreateCategoryByName(userId, suggested);
   }
 
   let best: { id: string; name: string; similarity: number } | null = null;
@@ -62,7 +106,10 @@ export async function assignCategory(
   }
 
   if (best) return { id: best.id, name: best.name };
-  return getOrCreateCategoryByName(userId, DEFAULT_CATEGORY_NAME);
+  
+  // No good match found, use AI to suggest a category
+  const suggested = await suggestCategoryName(trimmed);
+  return getOrCreateCategoryByName(userId, suggested);
 }
 
 /**
@@ -72,9 +119,12 @@ export async function previewCategory(
   content: string,
   existingCategories: { id: string; name: string; embedding?: number[] | null }[]
 ): Promise<string> {
-  if (!content.trim()) return DEFAULT_CATEGORY_NAME;
+  if (!content.trim()) return "Personal";
   const withEmbedding = existingCategories.filter((c) => c.embedding?.length === 512);
-  if (withEmbedding.length === 0) return DEFAULT_CATEGORY_NAME;
+  if (withEmbedding.length === 0) {
+    // No categories with embeddings, use AI
+    return suggestCategoryName(content);
+  }
   const queryEmbedding = await generateEmbedding(content);
   let best: { name: string; similarity: number } | null = null;
   for (const cat of withEmbedding) {
@@ -83,7 +133,11 @@ export async function previewCategory(
       best = { name: cat.name, similarity: sim };
     }
   }
-  return best && best.similarity >= SIMILARITY_THRESHOLD ? best.name : DEFAULT_CATEGORY_NAME;
+  if (best && best.similarity >= SIMILARITY_THRESHOLD) {
+    return best.name;
+  }
+  // No good match, use AI
+  return suggestCategoryName(content);
 }
 
 async function getCategoryByName(

@@ -15,13 +15,13 @@ export const RAG_HYBRID_DEFAULTS = {
 export const RAG_NETWORK_DEFAULTS = {
   initialCount: 6,
   relatedCount: 3,
-  similarityThreshold: 0.48,
+  similarityThreshold: 0.35, // Lowered from 0.48 to catch more semantic matches
 } as const;
 
 /** Semantic-only search (match_memories) defaults. */
 export const RAG_SEMANTIC_DEFAULTS = {
   matchCount: 10,
-  matchThreshold: 0.55,
+  matchThreshold: 0.40, // Lowered from 0.55 to be more inclusive
 } as const;
 
 /** Context building: content preview length for Claude. */

@@ -1,14 +1,38 @@
 /**
- * MemoBot agent orchestrator: agentic loop with Claude tool-use (PLAN.md Phase 6 RAG).
+ * MemoBot agent orchestrator: agentic loop with OpenAI tool-use.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { MEMOBOT_SYSTEM_PROMPT } from "./system-prompt";
 import { MEMOBOT_TOOLS } from "./tools";
 import { handleToolCall } from "./tool-handlers";
 import { RAG_CONTEXT_DEFAULTS } from "../lib/rag-config";
 
-const anthropic = new Anthropic();
+function getOpenAIClient(): OpenAI {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "OPENAI_API_KEY is not set. Please add it to your .env.local file."
+    );
+  }
+  return new OpenAI({ apiKey });
+}
+
+// Convert our tool format to OpenAI's function format
+function convertToolsToOpenAI(): OpenAI.Chat.Completions.ChatCompletionTool[] {
+  return MEMOBOT_TOOLS.map((tool) => ({
+    type: "function" as const,
+    function: {
+      name: tool.name,
+      description: tool.description || "",
+      parameters: {
+        type: "object",
+        properties: tool.input_schema.properties || {},
+        required: tool.input_schema.required || [],
+      },
+    },
+  }));
+}
 
 export interface ConversationContext {
   userId: string;
@@ -17,73 +41,121 @@ export interface ConversationContext {
   messageHistory: Array<{ role: "user" | "assistant"; content: string }>;
 }
 
-type ToolUseBlock = { type: "tool_use"; id: string; name: string; input: unknown };
-type TextBlock = { type: "text"; text: string };
-type ToolResultBlock = { type: "tool_result"; tool_use_id: string; content: string };
+export interface RetrievedMemory {
+  id: string;
+  title: string | null;
+  content_preview: string;
+}
 
-// SDK expects MessageParam[] with content: string | ContentBlockParam[]; we build compatible messages and cast
-type SDKMessageParam = { role: "user" | "assistant"; content: string | unknown[] };
+export interface ProcessMessageResult {
+  reply: string;
+  retrievedMemories: RetrievedMemory[];
+}
 
 /**
- * Process one user message: run Claude with tools and agentic loop until done.
+ * Process one user message: run OpenAI with tools and agentic loop until done.
  */
 export async function processMessage(
   userMessage: string,
   context: ConversationContext
-): Promise<string> {
+): Promise<ProcessMessageResult> {
   const { userId, sessionId, platform, messageHistory } = context;
 
+  const openai = getOpenAIClient();
+  const tools = convertToolsToOpenAI();
+
   const maxHistory = RAG_CONTEXT_DEFAULTS.maxMessageHistoryForContext;
-  const messages: SDKMessageParam[] = [
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    { role: "system", content: MEMOBOT_SYSTEM_PROMPT },
     ...messageHistory.slice(-maxHistory).map((m) => ({
-      role: m.role,
+      role: m.role as "user" | "assistant",
       content: m.content,
     })),
     { role: "user", content: userMessage },
   ];
 
-  let response = await anthropic.messages.create({
-    model: "claude-sonnet-4-20250514",
+  let response = await openai.chat.completions.create({
+    model: "gpt-4o",
     max_tokens: 1024,
-    system: MEMOBOT_SYSTEM_PROMPT,
-    tools: MEMOBOT_TOOLS,
-    messages: messages as Parameters<Anthropic["messages"]["create"]>[0]["messages"],
+    messages,
+    tools,
+    tool_choice: "auto",
   });
 
-  while (response.stop_reason === "tool_use") {
-    const assistantContent = response.content;
-    const toolUseBlocks = assistantContent.filter(
-      (b): b is ToolUseBlock => (b as { type: string }).type === "tool_use"
-    );
+  let assistantMessage = response.choices[0]?.message;
+  
+  // Track retrieved memories from search_memories calls
+  const retrievedMemories: RetrievedMemory[] = [];
 
-    const toolResults: ToolResultBlock[] = [];
-    for (const block of toolUseBlocks) {
-      const result = await handleToolCall(
-        block.name,
-        (block.input ?? {}) as Record<string, unknown>,
-        { userId, sessionId, platform }
-      );
-      toolResults.push({
-        type: "tool_result",
-        tool_use_id: block.id,
+  // Agentic loop: process tool calls until done
+  while (assistantMessage?.tool_calls && assistantMessage.tool_calls.length > 0) {
+    // Add assistant message with tool calls to history
+    messages.push(assistantMessage);
+
+    // Process each tool call
+    for (const toolCall of assistantMessage.tool_calls) {
+      // Handle function tool calls
+      if (toolCall.type !== "function") continue;
+      
+      const functionCall = toolCall as OpenAI.Chat.Completions.ChatCompletionMessageToolCall & {
+        type: "function";
+        function: { name: string; arguments: string };
+      };
+      
+      const toolName = functionCall.function.name;
+      let toolInput: Record<string, unknown> = {};
+      
+      try {
+        toolInput = JSON.parse(functionCall.function.arguments || "{}");
+      } catch {
+        toolInput = {};
+      }
+
+      const result = await handleToolCall(toolName, toolInput, {
+        userId,
+        sessionId,
+        platform,
+      });
+
+      // Capture memories from search_memories tool calls
+      if (toolName === "search_memories" && result && typeof result === "object") {
+        const searchResult = result as { memories?: RetrievedMemory[] };
+        if (searchResult.memories && Array.isArray(searchResult.memories)) {
+          for (const memory of searchResult.memories) {
+            // Avoid duplicates
+            if (!retrievedMemories.some(m => m.id === memory.id)) {
+              retrievedMemories.push({
+                id: memory.id,
+                title: memory.title,
+                content_preview: memory.content_preview,
+              });
+            }
+          }
+        }
+      }
+
+      // Add tool result to messages
+      messages.push({
+        role: "tool",
+        tool_call_id: toolCall.id,
         content: JSON.stringify(result),
       });
     }
 
-    messages.push({ role: "assistant", content: assistantContent });
-    messages.push({ role: "user", content: toolResults });
-
-    response = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
+    // Continue the conversation
+    response = await openai.chat.completions.create({
+      model: "gpt-4o",
       max_tokens: 1024,
-      system: MEMOBOT_SYSTEM_PROMPT,
-      tools: MEMOBOT_TOOLS,
-      messages: messages as Parameters<Anthropic["messages"]["create"]>[0]["messages"],
+      messages,
+      tools,
+      tool_choice: "auto",
     });
+
+    assistantMessage = response.choices[0]?.message;
   }
 
-  const textBlock = response.content.find(
-    (b) => (b as { type: string }).type === "text"
-  ) as TextBlock | undefined;
-  return textBlock?.text?.trim() ?? "I'm not sure how to respond to that.";
+  return {
+    reply: assistantMessage?.content?.trim() ?? "I'm not sure how to respond to that.",
+    retrievedMemories,
+  };
 }

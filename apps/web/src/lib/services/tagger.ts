@@ -2,8 +2,17 @@
  * TagService: extract tags from content, normalize, get-or-create (user-scoped).
  */
 
+import OpenAI from "openai";
 import { createServerSupabase } from "../supabase/server";
 import { generateEmbedding } from "./embedding";
+
+function getOpenAIClient(): OpenAI {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is not set.");
+  }
+  return new OpenAI({ apiKey });
+}
 
 export interface TagRow {
   id: string;
@@ -87,23 +96,44 @@ export async function getOrCreateTags(
 }
 
 /**
- * Extract tag names from content using a simple heuristic (or could use Claude).
- * For Phase 2 we use a simple keyword-style extraction; can be replaced with LLM later.
+ * Extract meaningful tag names from content using AI.
  */
-export function extractTagNamesFromContent(content: string, maxTags = 5): string[] {
-  const lower = content.toLowerCase();
-  const words = lower.split(/\s+/).filter((w) => w.length > 2);
-  const seen = new Set<string>();
-  const tags: string[] = [];
-  for (const w of words) {
-    const cleaned = w.replace(/[^a-z0-9]/g, "");
-    if (cleaned.length >= 2 && !seen.has(cleaned)) {
-      seen.add(cleaned);
-      tags.push(cleaned);
-      if (tags.length >= maxTags) break;
+export async function extractTagNamesFromContent(content: string, maxTags = 5): Promise<string[]> {
+  try {
+    const openai = getOpenAIClient();
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      max_tokens: 100,
+      messages: [
+        {
+          role: "system",
+          content: `You extract meaningful topic tags from text. Return only a JSON array of ${maxTags} short, relevant tags (1-3 words each). Tags should be meaningful topics, themes, or categories - NOT random words from the text. Examples of good tags: "family", "travel", "work project", "health", "birthday", "legal documents".`,
+        },
+        {
+          role: "user",
+          content: `Extract ${maxTags} meaningful tags from this content:\n\n${content.slice(0, 1500)}`,
+        },
+      ],
+    });
+    
+    const text = response.choices[0]?.message?.content?.trim() ?? "[]";
+    // Extract JSON array from response (use [\s\S]* instead of .* with s flag)
+    const match = text.match(/\[[\s\S]*\]/);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .filter((t): t is string => typeof t === "string")
+          .map((t) => t.trim().toLowerCase())
+          .filter((t) => t.length > 0)
+          .slice(0, maxTags);
+      }
     }
+    return ["general"];
+  } catch (error) {
+    console.error("Failed to extract tags with AI:", error);
+    return ["general"];
   }
-  return tags;
 }
 
 /**
@@ -113,17 +143,17 @@ export async function extractAndAssignTags(
   userId: string,
   content: string
 ): Promise<TagRow[]> {
-  const names = extractTagNamesFromContent(content, 5);
+  const names = await extractTagNamesFromContent(content, 5);
   return getOrCreateTags(userId, names.length ? names : ["general"]);
 }
 
 /**
  * Preview which tags would be extracted (for draft display).
  */
-export function previewTags(
+export async function previewTags(
   content: string,
   _existingTags: { name: string }[],
   maxTags = 5
-): string[] {
+): Promise<string[]> {
   return extractTagNamesFromContent(content, maxTags);
 }

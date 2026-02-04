@@ -2,7 +2,7 @@
  * MemoBot tool handlers: execute agent tools with user/session context (PLAN.md).
  */
 
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { createServerSupabase } from "../lib/supabase/server";
 import { generateEmbedding } from "../lib/services/embedding";
 import { assignCategory, previewCategory, incrementCategoryMemoryCount } from "../lib/services/categorizer";
@@ -19,7 +19,13 @@ import {
   RAG_CONTEXT_DEFAULTS,
 } from "../lib/rag-config";
 
-const anthropic = new Anthropic();
+function getOpenAIClient(): OpenAI {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is not set.");
+  }
+  return new OpenAI({ apiKey });
+}
 
 export interface ToolContext {
   userId: string;
@@ -28,8 +34,9 @@ export interface ToolContext {
 }
 
 async function generateTitleAndSummary(content: string): Promise<{ title: string; summary: string }> {
-  const msg = await anthropic.messages.create({
-    model: "claude-sonnet-4-20250514",
+  const openai = getOpenAIClient();
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
     max_tokens: 256,
     messages: [
       {
@@ -38,9 +45,7 @@ async function generateTitleAndSummary(content: string): Promise<{ title: string
       },
     ],
   });
-  const text =
-    (msg.content.find((b) => b.type === "text") as { type: "text"; text: string } | undefined)?.text ??
-    "";
+  const text = response.choices[0]?.message?.content ?? "";
   const lines = text.trim().split("\n").map((l) => l.trim()).filter(Boolean);
   const title = lines[0]?.replace(/^title:?\s*/i, "").slice(0, 100) || "Untitled";
   const summary = lines[1]?.replace(/^summary:?\s*/i, "").slice(0, 200) || content.slice(0, 150);
@@ -65,6 +70,7 @@ export async function handleToolCall(
       const embedding = await generateEmbedding(query);
 
       if (includeRelated) {
+        // Try network search first (semantic + relationships)
         const { data } = await supabase.rpc("get_memory_network", {
           p_user_id: userId,
           query_embedding: embedding,
@@ -72,7 +78,28 @@ export async function handleToolCall(
           related_count: RAG_NETWORK_DEFAULTS.relatedCount,
           similarity_threshold: RAG_NETWORK_DEFAULTS.similarityThreshold,
         });
-        return formatMemoryResults((data ?? []) as MemoryNetworkRow[]);
+        
+        // If network search found results, return them
+        if (data && data.length > 0) {
+          return formatMemoryResults(data as MemoryNetworkRow[]);
+        }
+        
+        // Fallback to hybrid search (keyword + semantic) when network search fails
+        const { data: hybridData } = await supabase.rpc("hybrid_search_memories", {
+          p_user_id: userId,
+          query_text: query,
+          query_embedding: embedding,
+          match_count: limit,
+          full_text_weight: 1.5, // Boost keyword matching in fallback
+          semantic_weight: 1.0,
+          rrf_k: 50,
+        });
+        
+        if (hybridData && hybridData.length > 0) {
+          return formatHybridResults(hybridData as HybridMemoryRow[]);
+        }
+        
+        return { memories: [], message: "No memories found" };
       }
       const { data } = await supabase.rpc("match_memories", {
         p_user_id: userId,
@@ -217,7 +244,7 @@ export async function handleToolCall(
       );
 
       const { data: tagsData } = await supabase.from("tags").select("name").eq("user_id", userId);
-      const tagsPreview = previewTags(
+      const tagsPreview = await previewTags(
         fullContent,
         (tagsData ?? []) as { name: string }[],
         5
@@ -440,6 +467,14 @@ interface MatchMemoryRow {
   created_at?: string;
 }
 
+interface HybridMemoryRow {
+  id: string;
+  title: string | null;
+  content: string;
+  score?: number;
+  created_at?: string;
+}
+
 interface MemoryWithRelations {
   id: string;
   title: string | null;
@@ -482,6 +517,18 @@ function formatMemoryResultsFromMatch(rows: MatchMemoryRow[]): unknown {
       title: m.title,
       content_preview: m.content?.slice(0, CONTENT_PREVIEW_LEN) + (m.content && m.content.length > CONTENT_PREVIEW_LEN ? "..." : ""),
       similarity: m.similarity,
+    })),
+  };
+}
+
+function formatHybridResults(rows: HybridMemoryRow[]): unknown {
+  if (!rows?.length) return { memories: [], message: "No memories found" };
+  return {
+    memories: rows.map((m) => ({
+      id: m.id,
+      title: m.title,
+      content_preview: m.content?.slice(0, CONTENT_PREVIEW_LEN) + (m.content && m.content.length > CONTENT_PREVIEW_LEN ? "..." : ""),
+      score: m.score,
     })),
   };
 }

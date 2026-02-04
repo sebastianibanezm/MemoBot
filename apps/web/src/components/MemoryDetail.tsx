@@ -1,0 +1,776 @@
+"use client";
+
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+
+interface RelatedMemory {
+  id: string;
+  title: string | null;
+  summary: string | null;
+  content: string;
+  category_name: string | null;
+  similarity_score: number;
+}
+
+interface Category {
+  id: string;
+  name: string;
+  memory_count: number;
+}
+
+interface Tag {
+  id: string;
+  name: string;
+  usage_count: number;
+}
+
+interface MemoryDetailProps {
+  memory: {
+    id: string;
+    title: string | null;
+    content: string;
+    summary: string | null;
+    category_id: string | null;
+    category_name: string | null;
+    tag_ids: string[];
+    tag_names: string[];
+    source_platform: string | null;
+    created_at: string;
+    occurred_at: string | null;
+  };
+  relatedMemories?: RelatedMemory[];
+}
+
+interface SearchMemory {
+  id: string;
+  title: string | null;
+  summary: string | null;
+  content: string;
+}
+
+export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDetailProps) {
+  const router = useRouter();
+  const [isEditing, setIsEditing] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  // Form state
+  const [title, setTitle] = useState(memory.title || "");
+  const [content, setContent] = useState(memory.content);
+  const [summary, setSummary] = useState(memory.summary || "");
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(memory.category_id);
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>(memory.tag_ids);
+
+  // Categories and tags data
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
+  const [showTagDropdown, setShowTagDropdown] = useState(false);
+  const categoryDropdownRef = useRef<HTMLDivElement>(null);
+  const tagDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Link memory state
+  const [showLinkModal, setShowLinkModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchMemory[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [isLinking, setIsLinking] = useState(false);
+  const [unlinkingId, setUnlinkingId] = useState<string | null>(null);
+
+  // Fetch categories and tags on mount
+  useEffect(() => {
+    fetch("/api/categories")
+      .then((res) => (res.ok ? res.json() : { categories: [] }))
+      .then((data) => setCategories(data.categories ?? []))
+      .catch(() => setCategories([]));
+
+    fetch("/api/tags")
+      .then((res) => (res.ok ? res.json() : { tags: [] }))
+      .then((data) => setTags(data.tags ?? []))
+      .catch(() => setTags([]));
+  }, []);
+
+  // Close dropdowns when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (categoryDropdownRef.current && !categoryDropdownRef.current.contains(event.target as Node)) {
+        setShowCategoryDropdown(false);
+      }
+      if (tagDropdownRef.current && !tagDropdownRef.current.contains(event.target as Node)) {
+        setShowTagDropdown(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const toggleTag = useCallback((tagId: string) => {
+    setSelectedTagIds((prev) =>
+      prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]
+    );
+  }, []);
+
+  const selectCategory = useCallback((categoryId: string | null) => {
+    setSelectedCategoryId(categoryId);
+    setShowCategoryDropdown(false);
+  }, []);
+
+  // Get IDs of already related memories to exclude from search (memoized to prevent infinite loops)
+  const relatedIds = useMemo(
+    () => new Set(relatedMemories.map((r) => r.id)),
+    [relatedMemories]
+  );
+
+  useEffect(() => {
+    if (!showLinkModal) {
+      setSearchResults([]);
+      return;
+    }
+
+    const timeoutId = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        // Build URL with optional search parameter
+        const url = searchQuery.trim()
+          ? `/api/memories?limit=20&search=${encodeURIComponent(searchQuery)}`
+          : `/api/memories?limit=20`;
+        
+        const res = await fetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          // Filter out current memory and already related memories
+          const filtered = (data.memories ?? []).filter(
+            (m: SearchMemory) => m.id !== memory.id && !relatedIds.has(m.id)
+          );
+          setSearchResults(filtered);
+        }
+      } catch (error) {
+        console.error("Search failed:", error);
+      } finally {
+        setIsSearching(false);
+      }
+    }, searchQuery ? 300 : 0); // No delay for initial load
+
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery, showLinkModal, memory.id, relatedIds]);
+
+  const handleLinkMemory = async (targetMemoryId: string) => {
+    setIsLinking(true);
+    try {
+      const response = await fetch(`/api/memories/${memory.id}/relate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetMemoryId }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to link memory");
+      }
+
+      setShowLinkModal(false);
+      setSearchQuery("");
+      setSearchResults([]);
+      router.refresh();
+    } catch (error) {
+      console.error("Failed to link:", error);
+      alert("Failed to link memory. Please try again.");
+    } finally {
+      setIsLinking(false);
+    }
+  };
+
+  const handleUnlinkMemory = async (targetMemoryId: string, e: React.MouseEvent) => {
+    e.preventDefault(); // Prevent navigation when clicking unlink
+    e.stopPropagation();
+    
+    setUnlinkingId(targetMemoryId);
+    try {
+      const response = await fetch(
+        `/api/memories/${memory.id}/relate?targetMemoryId=${targetMemoryId}`,
+        { method: "DELETE" }
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to unlink memory");
+      }
+
+      router.refresh();
+    } catch (error) {
+      console.error("Failed to unlink:", error);
+      alert("Failed to unlink memory. Please try again.");
+    } finally {
+      setUnlinkingId(null);
+    }
+  };
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      const response = await fetch(`/api/memories/${memory.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          content,
+          summary,
+          category_id: selectedCategoryId,
+          tag_ids: selectedTagIds,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to update memory");
+      }
+
+      setIsEditing(false);
+      router.refresh();
+    } catch (error) {
+      console.error("Failed to save:", error);
+      alert("Failed to save changes. Please try again.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    setIsDeleting(true);
+    try {
+      const response = await fetch(`/api/memories/${memory.id}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to delete memory");
+      }
+
+      router.push("/dashboard/memories");
+    } catch (error) {
+      console.error("Failed to delete:", error);
+      alert("Failed to delete memory. Please try again.");
+      setIsDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  };
+
+  const handleCancel = () => {
+    setTitle(memory.title || "");
+    setContent(memory.content);
+    setSummary(memory.summary || "");
+    setSelectedCategoryId(memory.category_id);
+    setSelectedTagIds(memory.tag_ids);
+    setIsEditing(false);
+  };
+
+  return (
+    <div className="p-6 pb-20 max-w-3xl mx-auto">
+      {/* Back Link */}
+      <Link
+        href="/dashboard/memories"
+        className="link-accent text-sm inline-flex items-center gap-2 mb-6"
+      >
+        <span>&larr;</span> BACK TO MEMORIES
+      </Link>
+
+      {/* Memory Card */}
+      <article className="card-dystopian p-6">
+        {/* Header */}
+        <header className="mb-6 pb-4 border-b border-[var(--card-border)]">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1">
+              {isEditing ? (
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Memory title..."
+                  className="w-full text-2xl font-display tracking-wider text-[var(--foreground)] bg-[var(--background-alt)] border border-[var(--card-border)] rounded px-3 py-2 focus:outline-none focus:border-[var(--accent)]"
+                  style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
+                />
+              ) : (
+                <h1
+                  className="text-2xl font-display tracking-wider text-[var(--foreground)] mb-3"
+                  style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
+                >
+                  {memory.title || "(UNTITLED MEMORY)"}
+                </h1>
+              )}
+            </div>
+
+            {/* Action Buttons */}
+            {!isEditing && !showDeleteConfirm && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsEditing(true)}
+                  className="px-3 py-1.5 text-xs font-mono tracking-wider text-[var(--accent)] border border-[var(--accent)] rounded hover:bg-[var(--accent-muted)] transition-all"
+                >
+                  EDIT
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="px-3 py-1.5 text-xs font-mono tracking-wider text-red-400 border border-red-400/50 rounded hover:bg-red-400/10 transition-all"
+                >
+                  DELETE
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Metadata - View Mode */}
+          {!isEditing && (
+            <div className="flex flex-wrap gap-2 text-xs mt-3">
+              {memory.category_name && (
+                <span className="badge">{memory.category_name.toUpperCase()}</span>
+              )}
+              {memory.tag_names.map((t) => (
+                <span key={t} className="badge-muted">
+                  #{t.toUpperCase()}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Metadata - Edit Mode */}
+          {isEditing && (
+            <div className="mt-4 space-y-3">
+              {/* Category Selector */}
+              <div>
+                <label className="block text-xs text-[var(--accent)] tracking-wider mb-2">
+                  CATEGORY
+                </label>
+                <div className="relative" ref={categoryDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}
+                    className={`w-full px-3 py-2 bg-[var(--background-alt)] border rounded text-xs tracking-wider transition-colors flex items-center justify-between ${
+                      selectedCategoryId
+                        ? "border-[var(--accent)] text-[var(--foreground)]"
+                        : "border-[var(--card-border)] text-[var(--muted)]"
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M20 7h-7m7 10h-7M4 4h.01M4 12h.01M4 20h.01M8 4v0a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v0a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1ZM8 12v0a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v0a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1ZM8 20v0a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v0a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1Z"/>
+                      </svg>
+                      {selectedCategoryId
+                        ? categories.find((c) => c.id === selectedCategoryId)?.name || "SELECT CATEGORY"
+                        : "NO CATEGORY"}
+                    </span>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="m6 9 6 6 6-6"/>
+                    </svg>
+                  </button>
+
+                  {showCategoryDropdown && (
+                    <div className="absolute top-full left-0 mt-1 w-full max-h-48 overflow-y-auto bg-[var(--card)] border border-[var(--card-border)] rounded shadow-lg z-20">
+                      <div className="p-2 space-y-1">
+                        <button
+                          type="button"
+                          onClick={() => selectCategory(null)}
+                          className={`w-full text-left px-2 py-1.5 rounded text-xs transition-colors ${
+                            !selectedCategoryId
+                              ? "bg-[var(--accent)]/20 text-[var(--accent)]"
+                              : "hover:bg-[var(--background-alt)] text-[var(--foreground)]"
+                          }`}
+                        >
+                          No Category
+                        </button>
+                        {categories.map((cat) => (
+                          <button
+                            key={cat.id}
+                            type="button"
+                            onClick={() => selectCategory(cat.id)}
+                            className={`w-full text-left px-2 py-1.5 rounded text-xs transition-colors flex items-center justify-between ${
+                              selectedCategoryId === cat.id
+                                ? "bg-[var(--accent)]/20 text-[var(--accent)]"
+                                : "hover:bg-[var(--background-alt)] text-[var(--foreground)]"
+                            }`}
+                          >
+                            <span>{cat.name}</span>
+                            <span className="text-[10px] text-[var(--muted)]">{cat.memory_count}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Tags Selector */}
+              <div>
+                <label className="block text-xs text-[var(--accent)] tracking-wider mb-2">
+                  TAGS
+                </label>
+                <div className="relative" ref={tagDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setShowTagDropdown(!showTagDropdown)}
+                    className={`w-full px-3 py-2 bg-[var(--background-alt)] border rounded text-xs tracking-wider transition-colors flex items-center justify-between ${
+                      selectedTagIds.length > 0
+                        ? "border-[var(--accent)] text-[var(--foreground)]"
+                        : "border-[var(--card-border)] text-[var(--muted)]"
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z"/>
+                        <path d="M7 7h.01"/>
+                      </svg>
+                      {selectedTagIds.length > 0 ? (
+                        <span>{selectedTagIds.length} TAG{selectedTagIds.length > 1 ? "S" : ""} SELECTED</span>
+                      ) : (
+                        <span>NO TAGS</span>
+                      )}
+                    </span>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="m6 9 6 6 6-6"/>
+                    </svg>
+                  </button>
+
+                  {showTagDropdown && (
+                    <div className="absolute top-full left-0 mt-1 w-full max-h-48 overflow-y-auto bg-[var(--card)] border border-[var(--card-border)] rounded shadow-lg z-20">
+                      {tags.length === 0 ? (
+                        <div className="p-3 text-xs text-[var(--muted)]">No tags available</div>
+                      ) : (
+                        <div className="p-2 space-y-1">
+                          {tags.map((tag) => (
+                            <label
+                              key={tag.id}
+                              className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[var(--background-alt)] cursor-pointer transition-colors"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedTagIds.includes(tag.id)}
+                                onChange={() => toggleTag(tag.id)}
+                                className="w-4 h-4 rounded border-[var(--card-border)] text-[var(--accent)] focus:ring-[var(--accent)] focus:ring-offset-0 bg-[var(--background)]"
+                              />
+                              <span className="text-xs text-[var(--foreground)] flex-1">
+                                #{tag.name}
+                              </span>
+                              <span className="text-[10px] text-[var(--muted)]">
+                                {tag.usage_count}
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Selected Tags Display */}
+                {selectedTagIds.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {selectedTagIds.map((tagId) => {
+                      const tag = tags.find((t) => t.id === tagId);
+                      return tag ? (
+                        <span
+                          key={tagId}
+                          className="text-[10px] px-2 py-1 rounded bg-[var(--background-alt)] text-[var(--muted)] border border-[var(--card-border)] flex items-center gap-1"
+                        >
+                          #{tag.name}
+                          <button
+                            type="button"
+                            onClick={() => toggleTag(tagId)}
+                            className="hover:text-[var(--foreground)]"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M18 6 6 18"/>
+                              <path d="m6 6 12 12"/>
+                            </svg>
+                          </button>
+                        </span>
+                      ) : null;
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </header>
+
+        {/* Delete Confirmation */}
+        {showDeleteConfirm && (
+          <div className="mb-6 p-4 bg-red-900/20 border border-red-400/30 rounded">
+            <p className="text-sm text-[var(--foreground)] mb-4">
+              Are you sure you want to delete this memory? This action cannot be undone.
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="px-4 py-2 text-xs font-mono tracking-wider text-white bg-red-600 rounded hover:bg-red-700 disabled:opacity-50 transition-all"
+              >
+                {isDeleting ? "DELETING..." : "YES, DELETE"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={isDeleting}
+                className="px-4 py-2 text-xs font-mono tracking-wider text-[var(--muted)] border border-[var(--card-border)] rounded hover:text-[var(--foreground)] transition-all"
+              >
+                CANCEL
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Summary */}
+        {isEditing ? (
+          <div className="mb-6">
+            <label className="block text-xs text-[var(--accent)] tracking-wider mb-2">
+              SUMMARY
+            </label>
+            <textarea
+              value={summary}
+              onChange={(e) => setSummary(e.target.value)}
+              placeholder="Brief summary of the memory..."
+              rows={2}
+              className="w-full text-sm text-[var(--foreground)] bg-[var(--background-alt)] border border-[var(--card-border)] rounded px-3 py-2 focus:outline-none focus:border-[var(--accent)] resize-none"
+            />
+          </div>
+        ) : memory.summary ? (
+          <div className="mb-6 p-4 bg-[var(--background-alt)] border-l-2 border-[var(--accent)] rounded-r">
+            <p className="text-sm text-[var(--muted)] italic leading-relaxed">
+              {memory.summary}
+            </p>
+          </div>
+        ) : null}
+
+        {/* Content */}
+        {isEditing ? (
+          <div className="mb-6">
+            <label className="block text-xs text-[var(--accent)] tracking-wider mb-2">
+              CONTENT
+            </label>
+            <textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              placeholder="Memory content..."
+              rows={10}
+              className="w-full text-sm text-[var(--foreground)] bg-[var(--background-alt)] border border-[var(--card-border)] rounded px-3 py-2 focus:outline-none focus:border-[var(--accent)] resize-y font-mono"
+            />
+          </div>
+        ) : (
+          <div className="prose prose-sm max-w-none">
+            <pre className="whitespace-pre-wrap font-sans text-[var(--foreground)] bg-transparent p-0 border-0 text-sm leading-relaxed">
+              {memory.content}
+            </pre>
+          </div>
+        )}
+
+        {/* Edit Actions */}
+        {isEditing && (
+          <div className="flex items-center gap-3 mb-6">
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={isSaving || !content.trim()}
+              className="px-4 py-2 text-xs font-mono tracking-wider text-[var(--foreground)] bg-[var(--accent)] rounded hover:opacity-90 disabled:opacity-50 transition-all"
+            >
+              {isSaving ? "SAVING..." : "SAVE CHANGES"}
+            </button>
+            <button
+              type="button"
+              onClick={handleCancel}
+              disabled={isSaving}
+              className="px-4 py-2 text-xs font-mono tracking-wider text-[var(--muted)] border border-[var(--card-border)] rounded hover:text-[var(--foreground)] transition-all"
+            >
+              CANCEL
+            </button>
+          </div>
+        )}
+
+        {/* Footer Metadata */}
+        <footer className="mt-8 pt-4 border-t border-[var(--card-border)]">
+          <div className="flex flex-wrap gap-6 text-xs text-[var(--muted)]">
+            <div>
+              <span className="text-[var(--accent)] tracking-wider">CREATED:</span>{" "}
+              {new Date(memory.created_at).toLocaleString()}
+            </div>
+            {memory.occurred_at && (
+              <div>
+                <span className="text-[var(--accent)] tracking-wider">OCCURRED:</span>{" "}
+                {new Date(memory.occurred_at).toLocaleString()}
+              </div>
+            )}
+            {memory.source_platform && (
+              <div>
+                <span className="text-[var(--accent)] tracking-wider">SOURCE:</span>{" "}
+                {memory.source_platform.toUpperCase()}
+              </div>
+            )}
+          </div>
+        </footer>
+      </article>
+
+      {/* Related Memories Section */}
+      <section className="mt-8">
+        <div className="flex items-center justify-between mb-4">
+          <h2
+            className="text-lg font-display tracking-wider text-[var(--foreground)]"
+            style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
+          >
+            RELATED MEMORIES
+          </h2>
+          <button
+            type="button"
+            onClick={() => setShowLinkModal(true)}
+            className="px-3 py-1.5 text-xs font-mono tracking-wider text-[var(--accent)] border border-[var(--accent)] rounded hover:bg-[var(--accent-muted)] transition-all"
+          >
+            + LINK MEMORY
+          </button>
+        </div>
+
+        {relatedMemories.length > 0 ? (
+          <div className="grid gap-4 sm:grid-cols-2">
+            {relatedMemories.map((related) => (
+              <div key={related.id} className="card-dystopian glitch-hover p-4 transition-all relative group">
+                <Link
+                  href={`/dashboard/memories/${related.id}`}
+                  className="block"
+                >
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <h3 className="font-medium text-[var(--foreground)] line-clamp-1 flex-1">
+                      {related.title || "(UNTITLED)"}
+                    </h3>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent)]/20 text-[var(--accent)] border border-[var(--accent)]/30 flex-shrink-0">
+                      {Math.round(related.similarity_score * 100)}%
+                    </span>
+                  </div>
+                  <p className="text-sm text-[var(--muted)] line-clamp-2">
+                    {related.summary || related.content}
+                  </p>
+                  {related.category_name && (
+                    <div className="mt-2">
+                      <span className="badge text-[10px]">
+                        {related.category_name.toUpperCase()}
+                      </span>
+                    </div>
+                  )}
+                </Link>
+                {/* Unlink Button */}
+                <button
+                  type="button"
+                  onClick={(e) => handleUnlinkMemory(related.id, e)}
+                  disabled={unlinkingId === related.id}
+                  className="absolute top-2 right-2 p-1.5 rounded bg-[var(--card)] border border-[var(--card-border)] text-[var(--muted)] hover:text-red-400 hover:border-red-400/50 transition-all opacity-0 group-hover:opacity-100 disabled:opacity-50"
+                  title="Unlink memory"
+                >
+                  {unlinkingId === related.id ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
+                      <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                    </svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M18 6 6 18"/>
+                      <path d="m6 6 12 12"/>
+                    </svg>
+                  )}
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="card-dystopian p-6 text-center">
+            <p className="text-sm text-[var(--muted)]">No related memories</p>
+            <p className="text-xs text-[var(--muted-light)] mt-1">
+              Use the &quot;Link Memory&quot; button above to manually connect related memories
+            </p>
+          </div>
+        )}
+      </section>
+
+      {/* Link Memory Modal */}
+      {showLinkModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+          <div className="card-dystopian w-full max-w-lg mx-4 p-6 max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <h3
+                className="text-lg font-display tracking-wider text-[var(--foreground)]"
+                style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
+              >
+                LINK A MEMORY
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLinkModal(false);
+                  setSearchQuery("");
+                  setSearchResults([]);
+                }}
+                className="text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="relative mb-4">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="11" cy="11" r="8"/>
+                  <path d="m21 21-4.35-4.35"/>
+                </svg>
+              </span>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Filter memories..."
+                className="w-full pl-9 pr-3 py-2 text-sm text-[var(--foreground)] bg-[var(--background-alt)] border border-[var(--card-border)] rounded focus:outline-none focus:border-[var(--accent)]"
+                autoFocus
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 6 6 18"/>
+                    <path d="m6 6 12 12"/>
+                  </svg>
+                </button>
+              )}
+            </div>
+
+            <div className="flex-1 overflow-y-auto min-h-[200px]">
+              {isSearching ? (
+                <div className="text-center py-8 text-sm text-[var(--muted)]">
+                  <span className="text-[var(--accent)]">&gt;</span> Loading memories...
+                </div>
+              ) : searchResults.length === 0 ? (
+                <div className="text-center py-8 text-sm text-[var(--muted)]">
+                  {searchQuery ? "No memories match your search" : "No other memories available to link"}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {searchResults.map((result) => (
+                    <button
+                      key={result.id}
+                      type="button"
+                      onClick={() => handleLinkMemory(result.id)}
+                      disabled={isLinking}
+                      className="w-full text-left p-3 rounded border border-[var(--card-border)] hover:border-[var(--accent)] hover:bg-[var(--background-alt)] transition-all disabled:opacity-50"
+                    >
+                      <div className="font-medium text-[var(--foreground)] text-sm truncate">
+                        {result.title || "(UNTITLED)"}
+                      </div>
+                      <div className="text-xs text-[var(--muted)] line-clamp-2 mt-1">
+                        {result.summary || result.content}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,6 +1,7 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import { syncUserToSupabase } from "@/lib/sync-user";
 import { UserButton } from "@clerk/nextjs";
 
@@ -45,10 +46,21 @@ export default async function DashboardLayout({
         {/* Logo/Brand */}
         <Link 
           href="/dashboard" 
-          className="text-lg font-display tracking-widest text-[var(--foreground)] hover:text-[var(--accent)] transition-colors"
-          style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
+          className="flex items-center gap-2 hover:opacity-80 transition-opacity"
         >
-          MEMOBOT
+          <Image
+            src="/images/MemoBot_logo.png"
+            alt="MemoBot"
+            width={32}
+            height={32}
+            className="rounded"
+          />
+          <span 
+            className="text-lg font-display tracking-widest text-[var(--foreground)]"
+            style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
+          >
+            MEMOBOT
+          </span>
         </Link>
 
         {/* Navigation Links */}
