@@ -8,6 +8,7 @@ import { MEMOBOT_TOOLS } from "./tools";
 import { handleToolCall } from "./tool-handlers";
 import { RAG_CONTEXT_DEFAULTS } from "../lib/rag-config";
 import { createServerSupabase } from "../lib/supabase/server";
+import { timed } from "../lib/timing";
 
 function getOpenAIClient(): OpenAI {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -33,6 +34,58 @@ function convertToolsToOpenAI(): OpenAI.Chat.Completions.ChatCompletionTool[] {
       },
     },
   }));
+}
+
+// Pre-compute OpenAI tools at module load time for efficiency
+const OPENAI_TOOLS = convertToolsToOpenAI();
+
+/**
+ * Determine if a query is simple enough for a faster/smaller model.
+ * Simple queries: button clicks, confirmations, short follow-ups.
+ */
+function shouldUseFastModel(
+  message: string,
+  messageHistory: Array<{ role: "user" | "assistant"; content: string }>,
+  buttonId?: string
+): boolean {
+  // Button clicks are predetermined flows - use fast model
+  if (buttonId) {
+    return true;
+  }
+
+  const trimmed = message.trim();
+  const wordCount = trimmed.split(/\s+/).length;
+
+  // Very short messages (1-3 words) during ongoing conversation
+  if (wordCount <= 3 && messageHistory.length > 0) {
+    return true;
+  }
+
+  // Confirmation patterns
+  const confirmationPatterns = [
+    /^(yes|no|yep|nope|yeah|nah|sure|ok|okay|done|save|cancel|skip)\.?$/i,
+    /^(save it|looks good|that's right|that's correct|perfect|great)\.?$/i,
+    /^(go ahead|confirm|approved|yes please|no thanks)\.?$/i,
+  ];
+
+  if (confirmationPatterns.some((p) => p.test(trimmed))) {
+    return true;
+  }
+
+  // Short additions during memory capture (less than 10 words, likely answering a question)
+  if (wordCount <= 10 && messageHistory.length >= 2) {
+    const lastAssistantMessage = messageHistory
+      .slice()
+      .reverse()
+      .find((m) => m.role === "assistant");
+
+    // If last assistant message asked a question, this is likely a simple answer
+    if (lastAssistantMessage?.content?.includes("?")) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /** Attachment info passed to the orchestrator */
@@ -79,7 +132,61 @@ export async function processMessage(
   context: ConversationContext
 ): Promise<ProcessMessageResult> {
   const { userId, sessionId, platform, messageHistory, buttonId, attachment } = context;
-  
+
+  // === QUICK RESPONSE PATTERNS (bypass LLM for common messages) ===
+  // Only apply for messages without attachments or button clicks
+  if (!attachment && !buttonId) {
+    const normalizedMessage = userMessage.toLowerCase().trim();
+
+    // Quick responses for greetings (only when no prior context)
+    const GREETING_RESPONSES: Record<string, string> = {
+      "hi": "Hi! How can I help you today? Tap 'New Memory' to save something, or just tell me what's on your mind.",
+      "hello": "Hello! How can I help you today? Tap 'New Memory' to save something, or just tell me what's on your mind.",
+      "hey": "Hey! How can I help you today? Tap 'New Memory' to save something, or just tell me what's on your mind.",
+      "hola": "Hola! How can I help you today? Tap 'New Memory' to save something, or just tell me what's on your mind.",
+      "good morning": "Good morning! How can I help you today?",
+      "good afternoon": "Good afternoon! How can I help you today?",
+      "good evening": "Good evening! How can I help you today?",
+    };
+
+    // Quick responses for thank you / goodbye (any context)
+    const UNIVERSAL_RESPONSES: Record<string, string> = {
+      "thanks": "You're welcome! Let me know if you need anything else.",
+      "thank you": "You're welcome! Let me know if you need anything else.",
+      "thanks!": "You're welcome! Let me know if you need anything else.",
+      "thank you!": "You're welcome! Let me know if you need anything else.",
+      "thx": "You're welcome! Let me know if you need anything else.",
+      "ty": "You're welcome! Let me know if you need anything else.",
+      "bye": "Goodbye! Your memories are safe with me. Come back anytime!",
+      "goodbye": "Goodbye! Your memories are safe with me. Come back anytime!",
+      "ok": "Got it! Let me know if there's anything else.",
+      "okay": "Got it! Let me know if there's anything else.",
+      "cool": "Great! Let me know if you need anything else.",
+      "nice": "Glad I could help! Anything else?",
+    };
+
+    // Check universal responses first (work in any context)
+    if (UNIVERSAL_RESPONSES[normalizedMessage]) {
+      return {
+        reply: UNIVERSAL_RESPONSES[normalizedMessage],
+        retrievedMemories: [],
+        createdMemory: null,
+        suggestedButtons: [{ id: "new_memory", title: "New Memory" }],
+      };
+    }
+
+    // Check greeting responses only for first message (no history)
+    if (messageHistory.length === 0 && GREETING_RESPONSES[normalizedMessage]) {
+      return {
+        reply: GREETING_RESPONSES[normalizedMessage],
+        retrievedMemories: [],
+        createdMemory: null,
+        suggestedButtons: [{ id: "new_memory", title: "New Memory" }],
+      };
+    }
+  }
+  // === END QUICK RESPONSE PATTERNS ===
+
   // Map button IDs to commands the agent understands
   let effectiveMessage = userMessage;
   
@@ -114,7 +221,6 @@ export async function processMessage(
   }
 
   const openai = getOpenAIClient();
-  const tools = convertToolsToOpenAI();
 
   const maxHistory = RAG_CONTEXT_DEFAULTS.maxMessageHistoryForContext;
   
@@ -138,13 +244,19 @@ export async function processMessage(
     { role: "user", content: effectiveMessage },
   ];
 
-  let response = await openai.chat.completions.create({
-    model: "gpt-4o",
-    max_tokens: 1024,
-    messages,
-    tools,
-    tool_choice: "auto",
-  });
+  // Smart model routing: use gpt-4o-mini for simple interactions
+  const useFastModel = shouldUseFastModel(effectiveMessage, messageHistory, buttonId);
+  const selectedModel = useFastModel ? "gpt-4o-mini" : "gpt-4o";
+
+  let response = await timed(`openai.chat.${selectedModel}`, () =>
+    openai.chat.completions.create({
+      model: selectedModel,
+      max_tokens: 1024,
+      messages,
+      tools: OPENAI_TOOLS,
+      tool_choice: "auto",
+    })
+  );
 
   let assistantMessage = response.choices[0]?.message;
   
@@ -157,44 +269,54 @@ export async function processMessage(
   // Track suggested buttons from the last tool call that provided them
   let suggestedButtons: SuggestedButton[] | undefined;
 
-  // Agentic loop: process tool calls until done
+  // Agentic loop: process tool calls until done (PARALLELIZED)
   while (assistantMessage?.tool_calls && assistantMessage.tool_calls.length > 0) {
     // Add assistant message with tool calls to history
     messages.push(assistantMessage);
 
-    // Process each tool call
-    for (const toolCall of assistantMessage.tool_calls) {
-      // Handle function tool calls
-      if (toolCall.type !== "function") continue;
-      
-      const functionCall = toolCall as OpenAI.Chat.Completions.ChatCompletionMessageToolCall & {
-        type: "function";
-        function: { name: string; arguments: string };
-      };
-      
-      const toolName = functionCall.function.name;
-      let toolInput: Record<string, unknown> = {};
-      
-      try {
-        toolInput = JSON.parse(functionCall.function.arguments || "{}");
-      } catch {
-        toolInput = {};
-      }
+    // Process all tool calls in parallel
+    const toolCallPromises = assistantMessage.tool_calls
+      .filter((toolCall) => toolCall.type === "function")
+      .map(async (toolCall) => {
+        const functionCall = toolCall as OpenAI.Chat.Completions.ChatCompletionMessageToolCall & {
+          type: "function";
+          function: { name: string; arguments: string };
+        };
 
-      const result = await handleToolCall(toolName, toolInput, {
-        userId,
-        sessionId,
-        platform,
-        attachmentId: attachment?.id,
+        const toolName = functionCall.function.name;
+        let toolInput: Record<string, unknown> = {};
+
+        try {
+          toolInput = JSON.parse(functionCall.function.arguments || "{}");
+        } catch {
+          toolInput = {};
+        }
+
+        const result = await handleToolCall(toolName, toolInput, {
+          userId,
+          sessionId,
+          platform,
+          attachmentId: attachment?.id,
+        });
+
+        return {
+          toolCall,
+          toolName,
+          result,
+        };
       });
 
+    // Wait for all tool calls to complete
+    const toolResults = await Promise.all(toolCallPromises);
+
+    // Process results and update tracking variables
+    for (const { toolCall, toolName, result } of toolResults) {
       // Capture memories from search_memories tool calls
       if (toolName === "search_memories" && result && typeof result === "object") {
         const searchResult = result as { memories?: RetrievedMemory[] };
         if (searchResult.memories && Array.isArray(searchResult.memories)) {
           for (const memory of searchResult.memories) {
-            // Avoid duplicates
-            if (!retrievedMemories.some(m => m.id === memory.id)) {
+            if (!retrievedMemories.some((m) => m.id === memory.id)) {
               retrievedMemories.push({
                 id: memory.id,
                 title: memory.title,
@@ -204,12 +326,12 @@ export async function processMessage(
           }
         }
       }
-      
+
       // Capture created memory from finalize_memory tool calls
       if (toolName === "finalize_memory" && result && typeof result === "object") {
-        const finalizeResult = result as { 
-          status?: string; 
-          memory?: { id: string; title: string; content_preview: string } 
+        const finalizeResult = result as {
+          status?: string;
+          memory?: { id: string; title: string; content_preview: string };
         };
         if (finalizeResult.status === "memory_saved" && finalizeResult.memory) {
           createdMemory = {
@@ -219,7 +341,7 @@ export async function processMessage(
           };
         }
       }
-      
+
       // Capture suggested buttons from any tool result
       if (result && typeof result === "object") {
         const resultWithButtons = result as { suggested_buttons?: SuggestedButton[] };
@@ -236,14 +358,16 @@ export async function processMessage(
       });
     }
 
-    // Continue the conversation
-    response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      max_tokens: 1024,
-      messages,
-      tools,
-      tool_choice: "auto",
-    });
+    // Continue the conversation with the same model for consistency
+    response = await timed(`openai.chat.${selectedModel}.continue`, () =>
+      openai.chat.completions.create({
+        model: selectedModel,
+        max_tokens: 1024,
+        messages,
+        tools: OPENAI_TOOLS,
+        tool_choice: "auto",
+      })
+    );
 
     assistantMessage = response.choices[0]?.message;
   }

@@ -151,6 +151,7 @@ export default function TagsPage() {
   const [expandedTagId, setExpandedTagId] = useState<string | null>(null);
   const [tagMemories, setTagMemories] = useState<Record<string, Memory[]>>({});
   const [loadingMemories, setLoadingMemories] = useState<string | null>(null);
+  const [tagSearch, setTagSearch] = useState("");
 
   // Fetch memories for a tag
   const fetchMemoriesForTag = async (tagId: string) => {
@@ -258,6 +259,15 @@ export default function TagsPage() {
   const sortedTags = useMemo(() => {
     return [...tags].sort((a, b) => b.usage_count - a.usage_count);
   }, [tags]);
+
+  // Filtered tags based on search
+  const filteredTags = useMemo(() => {
+    if (!tagSearch.trim()) return sortedTags;
+    const search = tagSearch.toLowerCase().trim();
+    return sortedTags.filter(tag => 
+      tag.name.toLowerCase().includes(search)
+    );
+  }, [sortedTags, tagSearch]);
 
   return (
     <div className="p-4 h-[calc(100vh-80px)] flex flex-col overflow-hidden">
@@ -427,13 +437,46 @@ export default function TagsPage() {
           {/* Tag List Section */}
           <div className="card-dystopian flex-1 overflow-hidden flex flex-col">
             <div className="px-4 py-3 border-b border-[var(--card-border)] flex-shrink-0">
-              <h2 className="text-sm font-medium tracking-wider text-[var(--foreground)]">
-                <span className="text-[var(--accent)]">//</span> ALL TAGS
-              </h2>
+              <div className="flex items-center justify-between gap-4">
+                <h2 className="text-sm font-medium tracking-wider text-[var(--foreground)] flex-shrink-0">
+                  <span className="text-[var(--accent)]">//</span> ALL TAGS
+                </h2>
+                
+                {/* Search Input */}
+                <div className="relative flex-1 max-w-xs">
+                  <input
+                    type="text"
+                    value={tagSearch}
+                    onChange={(e) => setTagSearch(e.target.value)}
+                    placeholder="Search tags..."
+                    className="w-full px-3 py-1.5 text-xs bg-[var(--background)] border border-[var(--card-border)] rounded text-[var(--foreground)] placeholder:text-[var(--muted-light)] focus:outline-none focus:border-[var(--accent)] transition-colors"
+                  />
+                  {tagSearch && (
+                    <button
+                      onClick={() => setTagSearch("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M18 6 6 18"/>
+                        <path d="m6 6 12 12"/>
+                      </svg>
+                    </button>
+                  )}
+                </div>
+                
+                {/* Result count */}
+                <span className="text-[10px] text-[var(--muted)] font-mono flex-shrink-0">
+                  {filteredTags.length}/{sortedTags.length}
+                </span>
+              </div>
             </div>
             
             <div className="flex-1 overflow-y-auto">
-              {sortedTags.map((tag) => (
+              {filteredTags.length === 0 ? (
+                <div className="px-4 py-8 text-center text-xs text-[var(--muted)]">
+                  No tags match &quot;{tagSearch}&quot;
+                </div>
+              ) : filteredTags.map((tag) => (
                 <div key={tag.id} className="border-b border-[var(--card-border)] last:border-b-0">
                   {/* Tag Row */}
                   <button

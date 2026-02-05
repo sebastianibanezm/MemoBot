@@ -1,15 +1,16 @@
 import { auth } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateSession, updateSessionHistory } from "@/lib/services/session";
 import { processMessage, type AttachmentInfo } from "@/agent/orchestrator";
 import { getAttachmentById } from "@/lib/services/attachment";
+import { withRateLimit } from "@/lib/api-utils";
 
 /**
  * POST /api/chat — Web chat endpoint for MemoBot.
  * Body: { message: string, attachmentIds?: string[] }
  * Returns: { reply: string, memories?: Array<{ id, title, content_preview }> }
  */
-export async function POST(request: Request) {
+async function handlePost(request: NextRequest) {
   const { userId } = await auth();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -85,3 +86,6 @@ export async function POST(request: Request) {
     );
   }
 }
+
+// Export with rate limiting (20 req/min for chat)
+export const POST = withRateLimit(handlePost, { type: "chat" });

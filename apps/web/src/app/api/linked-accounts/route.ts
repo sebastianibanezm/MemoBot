@@ -1,13 +1,14 @@
 import { auth } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getLinkedAccounts } from "@/lib/services/account-linking";
+import { withRateLimit } from "@/lib/api-utils";
 
 /**
  * GET /api/linked-accounts
  * Returns: { links: PlatformLink[] }
  * Requires Clerk auth.
  */
-export async function GET() {
+async function handleGet(_request: NextRequest) {
   const { userId } = await auth();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -32,3 +33,6 @@ export async function GET() {
     );
   }
 }
+
+// Export with rate limiting (60 req/min for general API)
+export const GET = withRateLimit(handleGet, { type: "api" });

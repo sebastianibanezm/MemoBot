@@ -25,6 +25,7 @@ import {
 } from "../lib/services/reminders";
 import { extractRelevantDate } from "../lib/services/date-extraction";
 import { linkAttachmentsToMemory } from "../lib/services/attachment";
+import { timed } from "../lib/timing";
 
 function getOpenAIClient(): OpenAI {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -75,34 +76,64 @@ export async function handleToolCall(
       const query = String(toolInput.query ?? "");
       const limit = Math.min(10, Number(toolInput.limit) || RAG_NETWORK_DEFAULTS.initialCount);
       const includeRelated = toolInput.include_related !== false;
-      const embedding = await generateEmbedding(query);
 
+      // Determine if this is a simple query (fast path)
+      const wordCount = query.trim().split(/\s+/).length;
+      const isSimpleQuery = wordCount <= 3;
+
+      const embedding = await timed("generateEmbedding", () => generateEmbedding(query));
+
+      // FAST PATH: For simple queries, try basic semantic search first
+      if (isSimpleQuery) {
+        const semanticResult = await timed("match_memories.fast", async () =>
+          supabase.rpc("match_memories", {
+            p_user_id: userId,
+            query_embedding: embedding,
+            match_count: limit,
+            match_threshold: RAG_SEMANTIC_DEFAULTS.matchThreshold,
+          })
+        );
+        const semanticData = semanticResult.data;
+
+        // If we found good results (at least 3 or the requested limit), return immediately
+        if (semanticData && semanticData.length >= Math.min(3, limit)) {
+          return formatMemoryResultsFromMatch(semanticData as MatchMemoryRow[]);
+        }
+      }
+
+      // FULL PATH: Use network search for complex queries or when simple search didn't find enough
       if (includeRelated) {
-        // Try network search first (semantic + relationships)
-        const { data } = await supabase.rpc("get_memory_network", {
-          p_user_id: userId,
-          query_embedding: embedding,
-          initial_count: limit,
-          related_count: RAG_NETWORK_DEFAULTS.relatedCount,
-          similarity_threshold: RAG_NETWORK_DEFAULTS.similarityThreshold,
-        });
-        
+        // Try network search (semantic + relationships)
+        const networkResult = await timed("get_memory_network", async () =>
+          supabase.rpc("get_memory_network", {
+            p_user_id: userId,
+            query_embedding: embedding,
+            initial_count: limit,
+            related_count: RAG_NETWORK_DEFAULTS.relatedCount,
+            similarity_threshold: RAG_NETWORK_DEFAULTS.similarityThreshold,
+          })
+        );
+        const data = networkResult.data;
+
         // If network search found results, return them
         if (data && data.length > 0) {
           return formatMemoryResults(data as MemoryNetworkRow[]);
         }
-        
+
         // Fallback to hybrid search (keyword + semantic) when network search fails
-        const { data: hybridData } = await supabase.rpc("hybrid_search_memories", {
-          p_user_id: userId,
-          query_text: query,
-          query_embedding: embedding,
-          match_count: limit,
-          full_text_weight: 1.5, // Boost keyword matching in fallback
-          semantic_weight: 1.0,
-          rrf_k: 50,
-        });
-        
+        const hybridResult = await timed("hybrid_search_memories", async () =>
+          supabase.rpc("hybrid_search_memories", {
+            p_user_id: userId,
+            query_text: query,
+            query_embedding: embedding,
+            match_count: limit,
+            full_text_weight: 1.5, // Boost keyword matching in fallback
+            semantic_weight: 1.0,
+            rrf_k: 50,
+          })
+        );
+        const hybridData = hybridResult.data;
+
         if (hybridData && hybridData.length > 0) {
           // Filter out low-relevance results - hybrid scores below this threshold are likely irrelevant
           // RRF scores typically range from 0 to ~0.04 (with rrf_k=50), so 0.01 is a reasonable minimum
@@ -110,21 +141,25 @@ export async function handleToolCall(
           const filteredData = (hybridData as HybridMemoryRow[]).filter(
             (m) => m.score && m.score >= MIN_HYBRID_SCORE
           );
-          
+
           if (filteredData.length > 0) {
             return formatHybridResults(filteredData);
           }
         }
-        
+
         return { memories: [], message: "No memories found" };
       }
-      const { data } = await supabase.rpc("match_memories", {
-        p_user_id: userId,
-        query_embedding: embedding,
-        match_count: limit,
-        match_threshold: RAG_SEMANTIC_DEFAULTS.matchThreshold,
-      });
-      return formatMemoryResultsFromMatch((data ?? []) as MatchMemoryRow[]);
+
+      // Non-related search (semantic only)
+      const matchResult = await timed("match_memories", async () =>
+        supabase.rpc("match_memories", {
+          p_user_id: userId,
+          query_embedding: embedding,
+          match_count: limit,
+          match_threshold: RAG_SEMANTIC_DEFAULTS.matchThreshold,
+        })
+      );
+      return formatMemoryResultsFromMatch((matchResult.data ?? []) as MatchMemoryRow[]);
     }
 
     case "get_memory_by_id": {
@@ -891,6 +926,7 @@ interface DraftShape {
   preview_category?: string;
   preview_tags?: string[];
   saving_in_progress?: boolean;
+  attachment_id?: string;
 }
 
 interface MemoryNetworkRow {

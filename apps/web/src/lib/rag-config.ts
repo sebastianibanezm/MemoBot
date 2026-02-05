@@ -27,5 +27,5 @@ export const RAG_SEMANTIC_DEFAULTS = {
 /** Context building: content preview length for Claude. */
 export const RAG_CONTEXT_DEFAULTS = {
   contentPreviewLength: 220,
-  maxMessageHistoryForContext: 8,
+  maxMessageHistoryForContext: 5, // Reduced from 8 for faster processing
 } as const;

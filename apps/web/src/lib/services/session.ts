@@ -95,3 +95,80 @@ export async function updateSessionHistory(
 
   if (error) throw new Error(`Failed to update session history: ${error.message}`);
 }
+
+/**
+ * Get or create session with minimal data (no message history).
+ * Use this when you only need the session ID for performance-critical paths.
+ */
+export async function getOrCreateSessionLite(
+  userId: string,
+  platform: Platform,
+  platformUserId: string
+): Promise<{ sessionId: string; isNew: boolean }> {
+  const supabase = createServerSupabase();
+
+  // Try to find existing session (only fetch ID)
+  const { data: existing } = await supabase
+    .from("conversation_sessions")
+    .select("id")
+    .eq("platform", platform)
+    .eq("platform_user_id", platformUserId)
+    .eq("user_id", userId)
+    .gt("expires_at", new Date().toISOString())
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (existing) {
+    return { sessionId: existing.id, isNew: false };
+  }
+
+  // Create new session
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const { data: created, error } = await supabase
+    .from("conversation_sessions")
+    .insert({
+      user_id: userId,
+      platform,
+      platform_user_id: platformUserId,
+      current_state: "CONVERSATION",
+      memory_draft: {},
+      message_history: [],
+      enrichment_count: 0,
+      expires_at: expiresAt,
+    })
+    .select("id")
+    .single();
+
+  if (error || !created) {
+    throw new Error(`Failed to create session: ${error?.message}`);
+  }
+
+  return { sessionId: created.id, isNew: true };
+}
+
+/**
+ * Get message history for a session (separate call for lazy loading).
+ * Returns only the last N messages for efficiency.
+ */
+export async function getSessionMessageHistory(
+  sessionId: string,
+  limit: number = 10
+): Promise<MessageHistoryEntry[]> {
+  const supabase = createServerSupabase();
+
+  const { data, error } = await supabase
+    .from("conversation_sessions")
+    .select("message_history")
+    .eq("id", sessionId)
+    .single();
+
+  if (error || !data) {
+    return [];
+  }
+
+  const history = (data.message_history ?? []) as MessageHistoryEntry[];
+
+  // Return only the last N messages
+  return history.slice(-limit);
+}

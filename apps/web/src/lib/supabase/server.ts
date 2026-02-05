@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 
@@ -6,7 +6,13 @@ import path from "node:path";
  * Server-side Supabase client with service role key (JWT only).
  * Use SUPABASE_SERVICE_ROLE_KEY from Dashboard → Project Settings → API → service_role (secret).
  * In dev, if env is missing/wrong, falls back to reading apps/web/.env.local so the key is never stale.
+ * 
+ * Uses singleton pattern to reuse the client across requests for efficiency.
  */
+
+// Singleton instance for server-side Supabase client
+let supabaseInstance: SupabaseClient | null = null;
+
 function getEnvFromFile(): { url?: string; serviceRoleKey?: string } {
   const cwd = process.cwd();
   const candidates = [
@@ -40,7 +46,12 @@ function getEnvFromFile(): { url?: string; serviceRoleKey?: string } {
   return {};
 }
 
-export function createServerSupabase() {
+export function createServerSupabase(): SupabaseClient {
+  // Return existing instance if available
+  if (supabaseInstance) {
+    return supabaseInstance;
+  }
+
   let supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   let serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
 
@@ -59,7 +70,16 @@ export function createServerSupabase() {
     );
   }
 
-  return createClient(supabaseUrl, serviceRoleKey, {
+  supabaseInstance = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false },
   });
+
+  return supabaseInstance;
+}
+
+/**
+ * Reset the Supabase instance (useful for testing).
+ */
+export function resetSupabaseInstance(): void {
+  supabaseInstance = null;
 }

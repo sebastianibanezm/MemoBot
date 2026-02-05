@@ -1,13 +1,14 @@
 import { auth } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { processSyncQueue } from "@/lib/services/sync-queue";
+import { withRateLimit } from "@/lib/api-utils";
 
 /**
  * POST /api/sync/process
  * Process pending memories for the current user (sync to local / GDrive / Dropbox).
  * Requires Clerk auth. Returns { processed, errors }.
  */
-export async function POST() {
+async function handlePost(_request: NextRequest) {
   const { userId } = await auth();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -24,3 +25,6 @@ export async function POST() {
     );
   }
 }
+
+// Export with rate limiting (30 req/min for memory operations)
+export const POST = withRateLimit(handlePost, { type: "memory" });
