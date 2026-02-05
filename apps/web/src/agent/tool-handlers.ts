@@ -720,13 +720,10 @@ export async function handleToolCall(
       const remindAt = String(toolInput.remind_at ?? "");
       const title = String(toolInput.title ?? "");
       const summary = toolInput.summary ? String(toolInput.summary) : null;
-      const channels = Array.isArray(toolInput.channels)
-        ? (toolInput.channels as string[]).filter((c) =>
-            ["whatsapp", "telegram", "email"].includes(c)
-          )
-        : ["email"];
+      // Channels are now auto-set based on source platform, no need to pass from tool input
+      const { platform } = context;
 
-      console.log("[create_reminder] Called with:", { memoryId, remindAt, title, channels });
+      console.log("[create_reminder] Called with:", { memoryId, remindAt, title, platform });
 
       if (!memoryId) {
         console.error("[create_reminder] Missing memory_id");
@@ -761,7 +758,7 @@ export async function handleToolCall(
           title,
           summary,
           remindAt: remindAtDate,
-          channels: channels as ("whatsapp" | "telegram" | "email")[],
+          sourcePlatform: platform,
         });
 
         const formattedDate = remindAtDate.toLocaleDateString("en-US", {
@@ -783,7 +780,7 @@ export async function handleToolCall(
             channels: reminder.channels,
             memory_title: memory.title,
           },
-          message: `Reminder set for ${formattedDate}. I'll notify you via ${channels.join(", ")}.`,
+          message: `Reminder set for ${formattedDate}. I'll notify you via ${reminder.channels.join(", ")}.`,
         };
       } catch (err) {
         console.error("[create_reminder] Failed to create reminder:", err instanceof Error ? err.message : err);

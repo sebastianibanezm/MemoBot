@@ -5,7 +5,6 @@ import {
   listReminders,
   ReminderStatus,
 } from "@/lib/services/reminders";
-import { NotificationChannel } from "@/lib/services/notifications";
 import { getMemoryById } from "@/lib/services/memory";
 
 /**
@@ -83,7 +82,7 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { memory_id, title, summary, remind_at, channels } = body;
+    const { memory_id, title, summary, remind_at } = body;
 
     // Validate required fields
     if (!memory_id) {
@@ -108,15 +107,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid remind_at date" }, { status: 400 });
     }
 
-    // Validate channels if provided
-    const validChannels: NotificationChannel[] = ["whatsapp", "telegram", "email"];
-    const reminderChannels: NotificationChannel[] = channels
-      ? (channels as string[]).filter((c) => validChannels.includes(c as NotificationChannel)) as NotificationChannel[]
-      : ["email"];
-
-    if (reminderChannels.length === 0) {
-      return NextResponse.json({ error: "At least one valid channel is required" }, { status: 400 });
-    }
+    // Channels are auto-set based on source platform (web → email + whatsapp)
+    // The channels parameter is ignored - notification channels are determined by source platform:
+    // - WhatsApp created → email + whatsapp
+    // - Telegram created → email + telegram
+    // - Web created → email + whatsapp
 
     const reminder = await createReminder({
       userId,
@@ -124,7 +119,8 @@ export async function POST(request: Request) {
       title,
       summary: summary ?? null,
       remindAt: remindAtDate,
-      channels: reminderChannels,
+      sourcePlatform: "web",
+      // No channels override - let the service auto-set based on platform
     });
 
     return NextResponse.json({ reminder }, { status: 201 });

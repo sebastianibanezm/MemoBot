@@ -18,17 +18,34 @@ function getOpenAIClient(): OpenAI {
 
 /**
  * Use AI to suggest a category name for the given content.
+ * If existing categories are provided, the AI will prefer to use one of them.
  */
-async function suggestCategoryName(content: string): Promise<string> {
+async function suggestCategoryName(
+  content: string,
+  existingCategoryNames: string[] = []
+): Promise<string> {
   try {
     const openai = getOpenAIClient();
+    
+    // Build system prompt based on whether we have existing categories
+    let systemPrompt: string;
+    if (existingCategoryNames.length > 0) {
+      systemPrompt = `You categorize content into meaningful categories. The user already has these categories: [${existingCategoryNames.join(", ")}].
+
+IMPORTANT: Strongly prefer to use one of the existing categories if the content reasonably fits. Only suggest a new category name if NONE of the existing categories are even remotely appropriate.
+
+Return ONLY a single category name (1-3 words, title case). If using an existing category, return it EXACTLY as shown above.`;
+    } else {
+      systemPrompt = `You categorize content into meaningful categories. Return ONLY a single category name (1-3 words, title case). Examples: "Personal", "Work", "Family", "Health", "Travel", "Finance", "Legal Documents", "Goals", "Ideas", "Learning".`;
+    }
+    
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       max_tokens: 50,
       messages: [
         {
           role: "system",
-          content: `You categorize content into meaningful categories. Return ONLY a single category name (1-3 words, title case). Examples: "Personal", "Work", "Family", "Health", "Travel", "Finance", "Legal Documents", "Goals", "Ideas", "Learning".`,
+          content: systemPrompt,
         },
         {
           role: "user",
@@ -54,12 +71,19 @@ export interface CategoryMatch {
   memory_count: number;
 }
 
-const SIMILARITY_THRESHOLD = 0.75;
+// Lowered from 0.75 to improve category reuse - 0.55 catches more semantic matches
+const SIMILARITY_THRESHOLD = 0.55;
 const DEFAULT_CATEGORY_NAME = "Uncategorized";
 
 /**
  * Find best-matching category by embedding similarity, or create one.
  * If content is already a category name (e.g. user override), we resolve by name first.
+ * 
+ * Matching strategy (prioritizes reuse of existing categories):
+ * 1. Exact name match (case-insensitive) if input looks like a category name
+ * 2. Embedding similarity match above threshold
+ * 3. AI suggestion with awareness of existing categories
+ * 4. Fallback embedding check on AI suggestion to catch near-duplicates
  */
 export async function assignCategory(
   userId: string,
@@ -87,17 +111,21 @@ export async function assignCategory(
 
   if (!categories?.length) {
     // No categories exist, use AI to suggest one
-    const suggested = await suggestCategoryName(trimmed);
+    const suggested = await suggestCategoryName(trimmed, []);
     return getOrCreateCategoryByName(userId, suggested);
   }
+
+  // Extract category names for AI awareness
+  const categoryNames = categories.map((c) => c.name);
 
   const withEmbedding = categories.filter((c) => c.embedding && Array.isArray(c.embedding));
   if (withEmbedding.length === 0) {
-    // Categories exist but none have embeddings, use AI to suggest
-    const suggested = await suggestCategoryName(trimmed);
+    // Categories exist but none have embeddings, use AI with category awareness
+    const suggested = await suggestCategoryName(trimmed, categoryNames);
     return getOrCreateCategoryByName(userId, suggested);
   }
 
+  // Find best embedding match
   let best: { id: string; name: string; similarity: number } | null = null;
   for (const cat of withEmbedding) {
     const sim = cosineSimilarity(queryEmbedding, cat.embedding as number[]);
@@ -108,8 +136,35 @@ export async function assignCategory(
 
   if (best) return { id: best.id, name: best.name };
   
-  // No good match found, use AI to suggest a category
-  const suggested = await suggestCategoryName(trimmed);
+  // No good embedding match found, use AI to suggest a category (with awareness of existing ones)
+  const suggested = await suggestCategoryName(trimmed, categoryNames);
+  
+  // Check if the AI suggestion matches an existing category by name
+  const exactMatch = categories.find(
+    (c) => c.name.toLowerCase() === suggested.toLowerCase()
+  );
+  if (exactMatch) {
+    return { id: exactMatch.id, name: exactMatch.name };
+  }
+  
+  // Fallback: Check if the AI's suggested name is semantically similar to an existing category
+  // This catches cases like AI suggesting "Work Projects" when "Work" exists
+  const suggestionEmbedding = await generateEmbedding(suggested);
+  const FALLBACK_THRESHOLD = 0.70; // Slightly higher threshold for name-to-name comparison
+  
+  let fallbackMatch: { id: string; name: string; similarity: number } | null = null;
+  for (const cat of withEmbedding) {
+    const sim = cosineSimilarity(suggestionEmbedding, cat.embedding as number[]);
+    if (sim >= FALLBACK_THRESHOLD && (!fallbackMatch || sim > fallbackMatch.similarity)) {
+      fallbackMatch = { id: cat.id, name: cat.name, similarity: sim };
+    }
+  }
+  
+  if (fallbackMatch) {
+    return { id: fallbackMatch.id, name: fallbackMatch.name };
+  }
+  
+  // No match at all - create new category
   return getOrCreateCategoryByName(userId, suggested);
 }
 
@@ -121,11 +176,15 @@ export async function previewCategory(
   existingCategories: { id: string; name: string; embedding?: number[] | null }[]
 ): Promise<string> {
   if (!content.trim()) return "Personal";
+  
+  const categoryNames = existingCategories.map((c) => c.name);
   const withEmbedding = existingCategories.filter((c) => c.embedding?.length === 512);
+  
   if (withEmbedding.length === 0) {
-    // No categories with embeddings, use AI
-    return suggestCategoryName(content);
+    // No categories with embeddings, use AI with category awareness
+    return suggestCategoryName(content, categoryNames);
   }
+  
   const queryEmbedding = await generateEmbedding(content);
   let best: { name: string; similarity: number } | null = null;
   for (const cat of withEmbedding) {
@@ -134,11 +193,41 @@ export async function previewCategory(
       best = { name: cat.name, similarity: sim };
     }
   }
+  
   if (best && best.similarity >= SIMILARITY_THRESHOLD) {
     return best.name;
   }
-  // No good match, use AI
-  return suggestCategoryName(content);
+  
+  // No good match, use AI with awareness of existing categories
+  const suggested = await suggestCategoryName(content, categoryNames);
+  
+  // Check if AI suggestion matches an existing category
+  const exactMatch = existingCategories.find(
+    (c) => c.name.toLowerCase() === suggested.toLowerCase()
+  );
+  if (exactMatch) {
+    return exactMatch.name;
+  }
+  
+  // Fallback: Check if the suggestion is semantically similar to an existing category
+  if (withEmbedding.length > 0) {
+    const suggestionEmbedding = await generateEmbedding(suggested);
+    const FALLBACK_THRESHOLD = 0.70;
+    
+    let fallbackMatch: { name: string; similarity: number } | null = null;
+    for (const cat of withEmbedding) {
+      const sim = cosineSimilarity(suggestionEmbedding, cat.embedding!);
+      if (sim >= FALLBACK_THRESHOLD && (!fallbackMatch || sim > fallbackMatch.similarity)) {
+        fallbackMatch = { name: cat.name, similarity: sim };
+      }
+    }
+    
+    if (fallbackMatch) {
+      return fallbackMatch.name;
+    }
+  }
+  
+  return suggested;
 }
 
 async function getCategoryByName(

@@ -247,7 +247,7 @@ export const MEMOBOT_TOOLS: MemoBotTool[] = [
   {
     name: "create_reminder",
     description:
-      "Create a reminder for a memory. Call this after the user confirms they want to set a reminder. The reminder will be sent at the specified time via the user's preferred notification channels.",
+      "Create a reminder for a memory. Call this after the user confirms they want to set a reminder. Notification channels are auto-set based on the platform: WhatsApp/Web reminders notify via email+WhatsApp, Telegram reminders notify via email+Telegram.",
     input_schema: {
       type: "object",
       properties: {
@@ -266,11 +266,6 @@ export const MEMOBOT_TOOLS: MemoBotTool[] = [
         summary: {
           type: "string",
           description: "Brief summary or reasoning for the reminder",
-        },
-        channels: {
-          type: "array",
-          items: { type: "string", enum: ["whatsapp", "telegram", "email"] },
-          description: "Notification channels to use. Defaults to ['email'] if not specified.",
         },
       },
       required: ["memory_id", "remind_at", "title"],

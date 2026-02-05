@@ -13,6 +13,8 @@ import {
 
 export type ReminderStatus = "pending" | "sent" | "failed" | "cancelled";
 
+export type SourcePlatform = "whatsapp" | "telegram" | "web";
+
 export interface ReminderRow {
   id: string;
   user_id: string;
@@ -23,8 +25,28 @@ export interface ReminderRow {
   channels: string[];
   status: ReminderStatus;
   sent_at: string | null;
+  source_platform: SourcePlatform;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Get the notification channels for a given source platform.
+ * - WhatsApp created → email + whatsapp
+ * - Telegram created → email + telegram
+ * - Web created → email + whatsapp
+ */
+export function getChannelsForPlatform(sourcePlatform: SourcePlatform): NotificationChannel[] {
+  switch (sourcePlatform) {
+    case "whatsapp":
+      return ["email", "whatsapp"];
+    case "telegram":
+      return ["email", "telegram"];
+    case "web":
+      return ["email", "whatsapp"];
+    default:
+      return ["email"];
+  }
 }
 
 export interface ReminderWithMemory extends ReminderRow {
@@ -42,7 +64,8 @@ export interface CreateReminderInput {
   title: string;
   summary?: string | null;
   remindAt: string | Date;
-  channels?: NotificationChannel[];
+  sourcePlatform: SourcePlatform;
+  channels?: NotificationChannel[]; // Optional override, auto-set based on sourcePlatform if not provided
 }
 
 export interface UpdateReminderInput {
@@ -62,6 +85,10 @@ export interface ListRemindersOptions {
 
 /**
  * Create a new reminder.
+ * Notification channels are automatically set based on the source platform:
+ * - WhatsApp created → email + whatsapp
+ * - Telegram created → email + telegram
+ * - Web created → email + whatsapp
  */
 export async function createReminder(input: CreateReminderInput): Promise<ReminderRow> {
   const supabase = createServerSupabase();
@@ -73,6 +100,9 @@ export async function createReminder(input: CreateReminderInput): Promise<Remind
     ? input.remindAt.toISOString() 
     : input.remindAt;
 
+  // Determine channels based on source platform (use provided channels as override, or auto-set)
+  const channels = input.channels ?? getChannelsForPlatform(input.sourcePlatform);
+
   const { data, error } = await supabase
     .from("reminders")
     .insert({
@@ -81,7 +111,8 @@ export async function createReminder(input: CreateReminderInput): Promise<Remind
       title: input.title,
       summary: input.summary ?? null,
       remind_at: remindAt,
-      channels: input.channels ?? ["email"],
+      channels,
+      source_platform: input.sourcePlatform,
       status: "pending",
     })
     .select()

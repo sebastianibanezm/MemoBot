@@ -2,11 +2,13 @@
  * WhatsApp Cloud API webhook (PLAN.md Phase 5).
  * GET: verification — hub.mode, hub.verify_token, hub.challenge; return challenge if token matches.
  * POST: verify X-Hub-Signature-256, parse entry/changes/messages, run message router, reply via Cloud API.
+ * Supports text messages, interactive buttons, and voice notes (via Whisper transcription).
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
 import { processIncomingMessage } from "@/lib/message-router";
+import { transcribeAudio } from "@/lib/services/transcription";
 
 const GRAPH_API = "https://graph.facebook.com/v21.0";
 
@@ -72,6 +74,76 @@ function getEnv(name: string): string | undefined {
 }
 
 /**
+ * Download media file from WhatsApp Cloud API.
+ * Step 1: GET /{mediaId} to get the media URL
+ * Step 2: GET the media URL with Bearer token to download the file
+ * 
+ * @param mediaId - The WhatsApp media ID
+ * @returns Object with buffer and mimeType, or null if download fails
+ */
+async function downloadWhatsAppMedia(
+  mediaId: string
+): Promise<{ buffer: Buffer; mimeType: string } | null> {
+  const token = getEnv("WHATSAPP_ACCESS_TOKEN");
+  if (!token) {
+    console.error("[WhatsApp] WHATSAPP_ACCESS_TOKEN not set for media download");
+    return null;
+  }
+
+  try {
+    // Step 1: Get the media URL
+    const mediaInfoUrl = `${GRAPH_API}/${mediaId}`;
+    console.log(`[WhatsApp] Fetching media info: ${mediaId}`);
+    
+    const infoRes = await fetch(mediaInfoUrl, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!infoRes.ok) {
+      const err = await infoRes.text();
+      console.error(`[WhatsApp] Failed to get media info: ${infoRes.status} ${err}`);
+      return null;
+    }
+
+    const mediaInfo = await infoRes.json() as { url?: string; mime_type?: string };
+    const mediaUrl = mediaInfo.url;
+    const mimeType = mediaInfo.mime_type ?? "audio/ogg";
+
+    if (!mediaUrl) {
+      console.error("[WhatsApp] No URL in media info response");
+      return null;
+    }
+
+    // Step 2: Download the actual media file
+    console.log(`[WhatsApp] Downloading media: ${mimeType}`);
+    
+    const mediaRes = await fetch(mediaUrl, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!mediaRes.ok) {
+      const err = await mediaRes.text();
+      console.error(`[WhatsApp] Failed to download media: ${mediaRes.status} ${err}`);
+      return null;
+    }
+
+    const arrayBuffer = await mediaRes.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    
+    console.log(`[WhatsApp] Downloaded media: ${buffer.length} bytes`);
+    
+    return { buffer, mimeType };
+  } catch (error) {
+    console.error("[WhatsApp] Media download error:", error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
+/**
  * GET: Webhook verification. Meta sends hub.mode=subscribe, hub.verify_token, hub.challenge.
  * Return hub.challenge as plain text if verify_token matches WHATSAPP_VERIFY_TOKEN.
  */
@@ -124,7 +196,7 @@ interface WhatsAppWebhookPayload {
         messages?: Array<{
           from?: string;
           id?: string;
-          type?: string;  // "text" | "interactive"
+          type?: string;  // "text" | "interactive" | "audio"
           text?: { body?: string };
           interactive?: {
             type?: string;  // "button_reply"
@@ -132,6 +204,10 @@ interface WhatsAppWebhookPayload {
               id?: string;    // e.g., "save_memory", "create_reminder"
               title?: string;
             };
+          };
+          audio?: {
+            id?: string;        // Media ID to download the audio file
+            mime_type?: string; // e.g., "audio/ogg; codecs=opus"
           };
         }>;
       };
@@ -253,23 +329,6 @@ export async function POST(request: NextRequest) {
         const messageId = msg.id ?? "";
         if (!from) continue;
         
-        // Extract message content from text OR button click
-        let text = "";
-        let buttonId: string | undefined;
-        
-        if (msg.type === "text" && msg.text?.body) {
-          text = msg.text.body.trim();
-        } else if (msg.type === "interactive" && msg.interactive?.button_reply) {
-          buttonId = msg.interactive.button_reply.id;
-          text = msg.interactive.button_reply.title ?? "";
-          console.log(`[WhatsApp] Button clicked: ${buttonId} ("${text}")`);
-        } else {
-          // Skip unsupported message types (images, voice, etc.)
-          continue;
-        }
-        
-        if (!text) continue;
-        
         // Skip duplicate messages (WhatsApp retries)
         if (messageId && isMessageProcessed(messageId)) {
           continue;
@@ -283,6 +342,51 @@ export async function POST(request: NextRequest) {
             await sendWhatsAppMessage(phoneNumberId, from, replyText);
           }
         };
+        
+        // Extract message content from text, button click, OR voice note
+        let text = "";
+        let buttonId: string | undefined;
+        
+        if (msg.type === "text" && msg.text?.body) {
+          text = msg.text.body.trim();
+        } else if (msg.type === "interactive" && msg.interactive?.button_reply) {
+          buttonId = msg.interactive.button_reply.id;
+          text = msg.interactive.button_reply.title ?? "";
+          console.log(`[WhatsApp] Button clicked: ${buttonId} ("${text}")`);
+        } else if (msg.type === "audio" && msg.audio?.id) {
+          // Handle voice note: download and transcribe
+          console.log(`[WhatsApp] Voice note received from ${from}, media ID: ${msg.audio.id}`);
+          
+          const media = await downloadWhatsAppMedia(msg.audio.id);
+          if (!media) {
+            // Failed to download media - send error message
+            try {
+              await replyFn("Sorry, I couldn't download your voice message. Please try again or type your message.");
+            } catch (sendErr) {
+              console.error("[WhatsApp] Failed to send media download error:", sendErr);
+            }
+            continue;
+          }
+          
+          const transcription = await transcribeAudio(media.buffer, media.mimeType);
+          if (!transcription.success) {
+            // Transcription failed - send error message
+            try {
+              await replyFn(transcription.error);
+            } catch (sendErr) {
+              console.error("[WhatsApp] Failed to send transcription error:", sendErr);
+            }
+            continue;
+          }
+          
+          text = transcription.text;
+          console.log(`[WhatsApp] Voice note transcribed: "${text.slice(0, 100)}${text.length > 100 ? "..." : ""}"`);
+        } else {
+          // Skip unsupported message types (images, videos, documents, etc.)
+          continue;
+        }
+        
+        if (!text) continue;
 
         // Process messages sequentially per user to prevent race conditions
         const sessionKey = `whatsapp:${from}`;
