@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>MemoBot Weekly Digest</title>
+  <!--[if mso]>
+  <noscript>
+    <xml>
+      <o:OfficeDocumentSettings>
+        <o:PixelsPerInch>96</o:PixelsPerInch>
+      </o:OfficeDocumentSettings>
+    </xml>
+  </noscript>
+  <![endif]-->
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Bebas+Neue&display=swap');
+    
+    body, table, td, p, a, li, blockquote {
+      -webkit-text-size-adjust: 100%;
+      -ms-text-size-adjust: 100%;
+    }
+    table, td {
+      mso-table-lspace: 0pt;
+      mso-table-rspace: 0pt;
+    }
+    img {
+      -ms-interpolation-mode: bicubic;
+      border: 0;
+      height: auto;
+      line-height: 100%;
+      outline: none;
+      text-decoration: none;
+    }
+    body {
+      margin: 0 !important;
+      padding: 0 !important;
+      background-color: #000000;
+      width: 100% !important;
+    }
+    a {
+      color: #00b34a;
+      text-decoration: none;
+    }
+    .button:hover {
+      background-color: rgba(0, 179, 74, 0.15) !important;
+    }
+  </style>
+</head>
+<body style="margin: 0; padding: 0; background-color: #000000; font-family: 'IBM Plex Mono', 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;">
+  
+  <!-- Preview Text -->
+  <div style="display: none; max-height: 0; overflow: hidden;">
+    Your MemoBot weekly digest: {{memories_count}} memories captured &nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
+  </div>
+  
+  <!-- Email Container -->
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color: #000000;">
+    <tr>
+      <td align="center" style="padding: 40px 20px;">
+        
+        <!-- Main Container -->
+        <table role="presentation" cellpadding="0" cellspacing="0" width="600" style="max-width: 600px; width: 100%;">
+          
+          <!-- Header -->
+          <tr>
+            <td align="center" style="padding-bottom: 24px;">
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="vertical-align: middle; padding-right: 12px;">
+                    <img src="{{logo_url}}" alt="MemoBot" width="40" height="40" style="border-radius: 4px; display: block;">
+                  </td>
+                  <td style="vertical-align: middle;">
+                    <span style="font-family: 'Bebas Neue', 'Impact', sans-serif; font-size: 24px; letter-spacing: 0.2em; color: #e8e4db;">MEMOBOT</span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          
+          <!-- Divider -->
+          <tr>
+            <td style="padding: 0 0 24px 0;">
+              <div style="border-top: 1px solid rgba(0, 179, 74, 0.3); height: 1px;"></div>
+            </td>
+          </tr>
+          
+          <!-- Heading -->
+          <tr>
+            <td align="center" style="padding: 0 10px;">
+              <h1 style="font-family: 'Bebas Neue', 'Impact', sans-serif; font-size: 28px; letter-spacing: 0.15em; color: #00b34a; margin: 0 0 8px 0;">
+                WEEKLY DIGEST
+              </h1>
+              <p style="font-size: 12px; color: #9a958c; letter-spacing: 0.1em; margin: 0 0 24px 0; text-transform: uppercase;">
+                // VAULT.STATUS.REPORT
+              </p>
+            </td>
+          </tr>
+          
+          <!-- Greeting -->
+          <tr>
+            <td style="padding: 0 10px;">
+              <p style="font-size: 14px; color: #e8e4db; margin: 0 0 20px 0;">
+                Hello, {{user_name}}
+              </p>
+            </td>
+          </tr>
+          
+          <!-- Intro -->
+          <tr>
+            <td style="padding: 0 10px;">
+              <p style="font-size: 14px; line-height: 1.6; color: #c4c0b8; margin: 0 0 16px 0;">
+                <span style="color: #00b34a;">&gt;</span> Your week in memories: {{week_start_date}} — {{week_end_date}}
+              </p>
+            </td>
+          </tr>
+          
+          <!-- Stats Card -->
+          <tr>
+            <td style="padding: 0 10px 16px 10px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color: #0a0a0a; border: 1px solid rgba(0, 179, 74, 0.3); border-radius: 4px;">
+                <tr>
+                  <td align="center" style="padding: 24px;">
+                    <p style="font-family: 'Bebas Neue', 'Impact', sans-serif; font-size: 48px; font-weight: 600; color: #00b34a; margin: 0 0 4px 0; letter-spacing: 0.05em;">
+                      {{memories_count}}
+                    </p>
+                    <p style="font-size: 11px; color: #9a958c; text-transform: uppercase; letter-spacing: 0.15em; margin: 0;">
+                      MEMORIES CAPTURED
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          
+          <!-- Narrative Card -->
+          <tr>
+            <td style="padding: 0 10px 20px 10px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color: #0a0a0a; border: 1px solid rgba(0, 179, 74, 0.3); border-radius: 4px;">
+                <tr>
+                  <td style="padding: 24px;">
+                    <p style="font-size: 11px; color: #9a958c; text-transform: uppercase; letter-spacing: 0.1em; margin: 0 0 16px 0;">
+                      <span style="color: #00b34a;">//</span> YOUR WEEK
+                    </p>
+                    <p style="font-size: 14px; line-height: 1.8; color: #e8e4db; margin: 0; white-space: pre-wrap;">{{narrative}}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          
+          <!-- Categories (optional) -->
+          {{#if categories}}
+          <tr>
+            <td style="padding: 0 10px 24px 10px;">
+              <p style="font-size: 11px; color: #9a958c; text-transform: uppercase; letter-spacing: 0.1em; margin: 0 0 12px 0;">
+                CATEGORIES TOUCHED:
+              </p>
+              <p style="margin: 0;">
+                {{#each categories}}
+                <span style="display: inline-block; font-size: 11px; color: #009940; background-color: rgba(0, 179, 74, 0.1); border: 1px solid rgba(0, 179, 74, 0.3); border-radius: 2px; padding: 4px 10px; margin: 0 8px 8px 0; text-transform: uppercase; letter-spacing: 0.05em;">{{this}}</span>
+                {{/each}}
+              </p>
+            </td>
+          </tr>
+          {{/if}}
+          
+          <!-- CTA Button -->
+          <tr>
+            <td align="center" style="padding: 32px 10px;">
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="border-radius: 4px; border: 1px solid #00b34a;">
+                    <a href="{{cta_url}}" class="button" target="_blank" style="display: inline-block; background-color: transparent; color: #00b34a; font-family: 'IBM Plex Mono', 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace; font-size: 14px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; text-decoration: none; padding: 14px 28px; border-radius: 4px;">
+                      VIEW ALL MEMORIES
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          
+          <!-- Divider -->
+          <tr>
+            <td style="padding: 0 0 24px 0;">
+              <div style="border-top: 1px solid rgba(0, 179, 74, 0.3); height: 1px;"></div>
+            </td>
+          </tr>
+          
+          <!-- Footer -->
+          <tr>
+            <td align="center" style="padding: 0 10px;">
+              <p style="font-size: 11px; color: #7a756c; letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 16px 0;">
+                <span style="color: #00b34a;">//</span> SYS.STATUS: OPERATIONAL
+              </p>
+              <p style="font-size: 11px; margin: 0 0 16px 0;">
+                <a href="{{dashboard_url}}" style="color: #9a958c; text-decoration: none; letter-spacing: 0.05em;">DASHBOARD</a>
+                <span style="color: #7a756c;"> • </span>
+                <a href="{{settings_url}}" style="color: #9a958c; text-decoration: none; letter-spacing: 0.05em;">SETTINGS</a>
+                <span style="color: #7a756c;"> • </span>
+                <a href="{{unsubscribe_url}}" style="color: #9a958c; text-decoration: none; letter-spacing: 0.05em;">UNSUBSCRIBE</a>
+              </p>
+              <p style="font-size: 11px; color: #7a756c; margin: 0;">
+                MemoBot © 2026 — Your AI Memory Assistant
+              </p>
+            </td>
+          </tr>
+          
+        </table>
+        
+      </td>
+    </tr>
+  </table>
+  
+</body>
+</html>

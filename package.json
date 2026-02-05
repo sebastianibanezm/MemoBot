@@ -11,5 +11,8 @@
     "type-check": "npm run type-check --workspace=web",
     "test": "npm run test --workspace=web",
     "db:migrate": "node scripts/run-supabase-migration.mjs"
+  },
+  "dependencies": {
+    "@react-email/components": "^1.0.7"
   }
 }

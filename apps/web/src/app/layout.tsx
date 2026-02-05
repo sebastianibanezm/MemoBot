@@ -25,8 +25,8 @@ export const metadata: Metadata = {
   title: "MemoBot",
   description: "AI memory assistant — enrich, categorize, and search your memories",
   icons: {
-    icon: "/images/MemoBot_logo.png",
-    shortcut: "/images/MemoBot_logo.png",
+    icon: "/images/MemoBot_logo.ico",
+    shortcut: "/images/MemoBot_logo.ico",
     apple: "/images/MemoBot_logo.png",
   },
 };

@@ -9,19 +9,27 @@ import { getOrCreateSession, updateSessionHistory } from "./services/session";
 import { processMessage } from "@/agent/orchestrator";
 import type { Platform } from "./services/account-linking";
 
-export type ReplyFn = (message: string) => Promise<void>;
+/** Options for rich replies (buttons only supported on WhatsApp) */
+export interface ReplyOptions {
+  buttons?: Array<{ id: string; title: string }>;
+}
+
+export type ReplyFn = (message: string, options?: ReplyOptions) => Promise<void>;
 
 /**
  * Process an incoming message from a messaging platform.
  * 1. If text is "LINK 123456", verify code and link account → reply with result.
  * 2. Else resolve user from platform_links; if unlinked → reply with welcome + instructions.
  * 3. Else get/create session, run agent, update history, reply with response.
+ * 
+ * @param buttonId - Optional button ID if user clicked an interactive button (WhatsApp only)
  */
 export async function processIncomingMessage(
   platform: Platform,
   platformUserId: string,
   text: string,
-  replyFn: ReplyFn
+  replyFn: ReplyFn,
+  buttonId?: string
 ): Promise<void> {
   const trimmedText = text.trim();
 
@@ -63,17 +71,21 @@ export async function processIncomingMessage(
     content: string;
   }>;
 
-  const response = await processMessage(trimmedText, {
+  const result = await processMessage(trimmedText, {
     userId,
     sessionId,
     platform,
     messageHistory,
+    buttonId,  // Pass button ID to orchestrator
   });
 
   await updateSessionHistory(sessionId, [
     { role: "user", content: trimmedText },
-    { role: "assistant", content: response },
+    { role: "assistant", content: result.reply },
   ]);
 
-  await replyFn(response);
+  // Pass suggested buttons to reply (only works on WhatsApp)
+  await replyFn(result.reply, {
+    buttons: platform === "whatsapp" ? result.suggestedButtons : undefined,
+  });
 }

@@ -7,6 +7,7 @@ import { MEMOBOT_SYSTEM_PROMPT } from "./system-prompt";
 import { MEMOBOT_TOOLS } from "./tools";
 import { handleToolCall } from "./tool-handlers";
 import { RAG_CONTEXT_DEFAULTS } from "../lib/rag-config";
+import { createServerSupabase } from "../lib/supabase/server";
 
 function getOpenAIClient(): OpenAI {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -39,6 +40,7 @@ export interface ConversationContext {
   sessionId: string;
   platform: "whatsapp" | "telegram" | "web";
   messageHistory: Array<{ role: "user" | "assistant"; content: string }>;
+  buttonId?: string;  // Button ID if user clicked an interactive button (WhatsApp only)
 }
 
 export interface RetrievedMemory {
@@ -47,10 +49,17 @@ export interface RetrievedMemory {
   content_preview: string;
 }
 
+/** Button suggestion from tool handlers */
+export interface SuggestedButton {
+  id: string;
+  title: string;
+}
+
 export interface ProcessMessageResult {
   reply: string;
   retrievedMemories: RetrievedMemory[];
   createdMemory: RetrievedMemory | null;
+  suggestedButtons?: SuggestedButton[];
 }
 
 /**
@@ -60,19 +69,55 @@ export async function processMessage(
   userMessage: string,
   context: ConversationContext
 ): Promise<ProcessMessageResult> {
-  const { userId, sessionId, platform, messageHistory } = context;
+  const { userId, sessionId, platform, messageHistory, buttonId } = context;
+  
+  // Map button IDs to commands the agent understands
+  let effectiveMessage = userMessage;
+  if (buttonId === "save_memory") {
+    effectiveMessage = "Save it";
+  } else if (buttonId === "create_reminder") {
+    // Fetch the last created memory ID from the session to ensure correct reminder creation
+    const supabase = createServerSupabase();
+    const { data: session } = await supabase
+      .from("conversation_sessions")
+      .select("memory_draft")
+      .eq("id", sessionId)
+      .single();
+    
+    const draft = session?.memory_draft as { last_created_memory_id?: string; last_created_memory_title?: string } | null;
+    if (draft?.last_created_memory_id) {
+      effectiveMessage = `Yes, create a reminder for the memory I just saved. The memory ID is ${draft.last_created_memory_id} and the title is "${draft.last_created_memory_title || 'Untitled'}".`;
+      console.log(`[orchestrator] create_reminder button clicked for memory: ${draft.last_created_memory_id}`);
+    } else {
+      effectiveMessage = "Yes, create a reminder for this memory";
+    }
+  } else if (buttonId === "new_memory") {
+    effectiveMessage = "I want to create a new memory";
+  }
 
   const openai = getOpenAIClient();
   const tools = convertToolsToOpenAI();
 
   const maxHistory = RAG_CONTEXT_DEFAULTS.maxMessageHistoryForContext;
-  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: MEMOBOT_SYSTEM_PROMPT },
-    ...messageHistory.slice(-maxHistory).map((m) => ({
+  
+  // Filter and sanitize message history to ensure all content is a valid string
+  // Skip any entries where content is not a string (corrupted from previous bug)
+  const sanitizedHistory = messageHistory
+    .slice(-maxHistory)
+    .filter((m) => 
+      (m.role === "user" || m.role === "assistant") && 
+      typeof m.content === "string" && 
+      m.content.trim().length > 0
+    )
+    .map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.content,
-    })),
-    { role: "user", content: userMessage },
+    }));
+  
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    { role: "system", content: MEMOBOT_SYSTEM_PROMPT },
+    ...sanitizedHistory,
+    { role: "user", content: effectiveMessage },
   ];
 
   let response = await openai.chat.completions.create({
@@ -90,6 +135,9 @@ export async function processMessage(
   
   // Track created memory from finalize_memory calls
   let createdMemory: RetrievedMemory | null = null;
+  
+  // Track suggested buttons from the last tool call that provided them
+  let suggestedButtons: SuggestedButton[] | undefined;
 
   // Agentic loop: process tool calls until done
   while (assistantMessage?.tool_calls && assistantMessage.tool_calls.length > 0) {
@@ -152,6 +200,14 @@ export async function processMessage(
           };
         }
       }
+      
+      // Capture suggested buttons from any tool result
+      if (result && typeof result === "object") {
+        const resultWithButtons = result as { suggested_buttons?: SuggestedButton[] };
+        if (resultWithButtons.suggested_buttons && Array.isArray(resultWithButtons.suggested_buttons)) {
+          suggestedButtons = resultWithButtons.suggested_buttons;
+        }
+      }
 
       // Add tool result to messages
       messages.push({
@@ -173,9 +229,14 @@ export async function processMessage(
     assistantMessage = response.choices[0]?.message;
   }
 
+  // Default to "New Memory" button for conversational responses (greetings, search results, etc.)
+  // This gives users an easy way to start creating a memory at any time
+  const finalButtons = suggestedButtons ?? [{ id: "new_memory", title: "New Memory" }];
+
   return {
     reply: assistantMessage?.content?.trim() ?? "I'm not sure how to respond to that.",
     retrievedMemories,
     createdMemory,
+    suggestedButtons: finalButtons,
   };
 }

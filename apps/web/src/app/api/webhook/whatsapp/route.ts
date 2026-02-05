@@ -10,6 +10,63 @@ import { processIncomingMessage } from "@/lib/message-router";
 
 const GRAPH_API = "https://graph.facebook.com/v21.0";
 
+/**
+ * Simple in-memory message deduplication cache.
+ * Prevents duplicate processing when WhatsApp retries webhooks.
+ * TTL: 5 minutes (300000ms)
+ */
+const processedMessages = new Map<string, number>();
+const MESSAGE_DEDUP_TTL_MS = 5 * 60 * 1000;
+
+function isMessageProcessed(messageId: string): boolean {
+  const now = Date.now();
+  
+  // Clean up expired entries
+  for (const [id, timestamp] of processedMessages) {
+    if (now - timestamp > MESSAGE_DEDUP_TTL_MS) {
+      processedMessages.delete(id);
+    }
+  }
+  
+  if (processedMessages.has(messageId)) {
+    console.log(`[WhatsApp] Skipping duplicate message: ${messageId}`);
+    return true;
+  }
+  
+  processedMessages.set(messageId, now);
+  return false;
+}
+
+/**
+ * Session-level queue to prevent race conditions when multiple messages
+ * arrive for the same user before the first one finishes processing.
+ */
+const sessionQueues = new Map<string, Promise<void>>();
+
+async function processWithSessionQueue(
+  sessionKey: string,
+  processor: () => Promise<void>
+): Promise<void> {
+  // Wait for any pending processing for this session
+  const pending = sessionQueues.get(sessionKey);
+  
+  // Chain this processing after the pending one
+  const newPromise = (pending ?? Promise.resolve()).then(processor).catch((err) => {
+    console.error(`[WhatsApp] Session queue error for ${sessionKey}:`, err);
+  });
+  
+  sessionQueues.set(sessionKey, newPromise);
+  
+  // Clean up after completion
+  newPromise.finally(() => {
+    if (sessionQueues.get(sessionKey) === newPromise) {
+      sessionQueues.delete(sessionKey);
+    }
+  });
+  
+  return newPromise;
+}
+
 function getEnv(name: string): string | undefined {
   return process.env[name];
 }
@@ -67,13 +124,26 @@ interface WhatsAppWebhookPayload {
         messages?: Array<{
           from?: string;
           id?: string;
-          type?: string;
+          type?: string;  // "text" | "interactive"
           text?: { body?: string };
+          interactive?: {
+            type?: string;  // "button_reply"
+            button_reply?: {
+              id?: string;    // e.g., "save_memory", "create_reminder"
+              title?: string;
+            };
+          };
         }>;
       };
       field?: string;
     }>;
   }>;
+}
+
+/** Button structure for interactive messages */
+export interface WhatsAppButton {
+  id: string;
+  title: string;  // max 20 chars
 }
 
 /**
@@ -99,6 +169,51 @@ async function sendWhatsAppMessage(phoneNumberId: string, to: string, text: stri
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`WhatsApp sendMessage failed: ${res.status} ${err}`);
+  }
+}
+
+/**
+ * Send an interactive message with reply buttons via WhatsApp Cloud API.
+ * Supports up to 3 buttons, each with max 20 character titles.
+ */
+async function sendWhatsAppInteractiveMessage(
+  phoneNumberId: string,
+  to: string,
+  bodyText: string,
+  buttons: WhatsAppButton[]
+): Promise<void> {
+  const token = getEnv("WHATSAPP_ACCESS_TOKEN");
+  if (!token) throw new Error("WHATSAPP_ACCESS_TOKEN not set");
+  
+  const url = `${GRAPH_API}/${phoneNumberId}/messages`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to: to.replace(/\D/g, ""),
+      type: "interactive",
+      interactive: {
+        type: "button",
+        body: { text: bodyText },
+        action: {
+          buttons: buttons.slice(0, 3).map((btn) => ({
+            type: "reply",
+            reply: { 
+              id: btn.id, 
+              title: btn.title.slice(0, 20)  // Enforce max 20 chars
+            },
+          })),
+        },
+      },
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`WhatsApp interactive message failed: ${res.status} ${err}`);
   }
 }
 
@@ -134,29 +249,55 @@ export async function POST(request: NextRequest) {
       const value = change.value;
       if (!value?.messages) continue;
       for (const msg of value.messages) {
-        if (msg.type !== "text" || !msg.text?.body) continue;
         const from = msg.from ?? "";
-        const text = msg.text.body.trim();
+        const messageId = msg.id ?? "";
         if (!from) continue;
+        
+        // Extract message content from text OR button click
+        let text = "";
+        let buttonId: string | undefined;
+        
+        if (msg.type === "text" && msg.text?.body) {
+          text = msg.text.body.trim();
+        } else if (msg.type === "interactive" && msg.interactive?.button_reply) {
+          buttonId = msg.interactive.button_reply.id;
+          text = msg.interactive.button_reply.title ?? "";
+          console.log(`[WhatsApp] Button clicked: ${buttonId} ("${text}")`);
+        } else {
+          // Skip unsupported message types (images, voice, etc.)
+          continue;
+        }
+        
+        if (!text) continue;
+        
+        // Skip duplicate messages (WhatsApp retries)
+        if (messageId && isMessageProcessed(messageId)) {
+          continue;
+        }
 
-        const replyFn = async (replyText: string) => {
-          await sendWhatsAppMessage(phoneNumberId, from, replyText);
+        // Reply function that supports optional buttons
+        const replyFn = async (replyText: string, options?: { buttons?: WhatsAppButton[] }) => {
+          if (options?.buttons && options.buttons.length > 0) {
+            await sendWhatsAppInteractiveMessage(phoneNumberId, from, replyText, options.buttons);
+          } else {
+            await sendWhatsAppMessage(phoneNumberId, from, replyText);
+          }
         };
 
-        try {
-          await processIncomingMessage("whatsapp", from, text, replyFn);
-        } catch (err) {
-          console.error("WhatsApp webhook processIncomingMessage error:", err);
+        // Process messages sequentially per user to prevent race conditions
+        const sessionKey = `whatsapp:${from}`;
+        await processWithSessionQueue(sessionKey, async () => {
           try {
-            await replyFn("Something went wrong. Please try again or contact support.");
-          } catch (sendErr) {
-            console.error("WhatsApp sendMessage error after failure:", sendErr);
+            await processIncomingMessage("whatsapp", from, text, replyFn, buttonId);
+          } catch (err) {
+            console.error("WhatsApp webhook processIncomingMessage error:", err);
+            try {
+              await replyFn("Something went wrong. Please try again or contact support.");
+            } catch (sendErr) {
+              console.error("WhatsApp sendMessage error after failure:", sendErr);
+            }
           }
-          return NextResponse.json(
-            { error: "Processing failed" },
-            { status: 500 }
-          );
-        }
+        });
       }
     }
   }

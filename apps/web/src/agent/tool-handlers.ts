@@ -219,6 +219,7 @@ export async function handleToolCall(
         message: initialContent
           ? "Got it! Can you tell me more about this?"
           : "What would you like to remember?",
+        suggested_buttons: [{ id: "save_memory", title: "Save Memory" }],
       };
     }
 
@@ -241,7 +242,12 @@ export async function handleToolCall(
           updated_at: new Date().toISOString(),
         })
         .eq("id", sessionId);
-      return { status: "content_added", enrichment_count: enrichmentCount, total_parts: parts.length };
+      return { 
+        status: "content_added", 
+        enrichment_count: enrichmentCount, 
+        total_parts: parts.length,
+        suggested_buttons: [{ id: "save_memory", title: "Save Memory" }],
+      };
     }
 
     case "generate_memory_draft": {
@@ -347,16 +353,26 @@ export async function handleToolCall(
         };
       }
       
-      if (!fullContent) {
-        // Draft exists but full_content not generated yet - need to call generate_memory_draft first
+      let generatedFullContent = fullContent;
+      let generatedTitle = draft?.title as string | undefined;
+      let generatedSummary = draft?.summary as string | undefined;
+      
+      if (!generatedFullContent) {
+        // Draft exists but full_content not generated yet - auto-generate it now
         if (draft?.content_parts && Array.isArray(draft.content_parts) && draft.content_parts.length > 0) {
-          console.log("[finalize_memory] Draft has content_parts but no full_content - need to generate draft first");
-          return { 
-            error: "draft_not_generated", 
-            message: "The memory draft needs to be generated first. Let me create a draft for you to review." 
-          };
+          console.log("[finalize_memory] Auto-generating draft from content_parts");
+          generatedFullContent = draft.content_parts.join("\n\n");
+          
+          // Generate title and summary if not already done
+          if (!generatedTitle || !generatedSummary) {
+            const generated = await generateTitleAndSummary(generatedFullContent);
+            generatedTitle = generatedTitle || generated.title;
+            generatedSummary = generatedSummary || generated.summary;
+          }
         }
-        
+      }
+      
+      if (!generatedFullContent) {
         // Check if a memory was recently created (draft might have been cleared)
         const { data: recentMemory } = await supabase
           .from("memories")
@@ -384,6 +400,10 @@ export async function handleToolCall(
                   recentMemory[0].content.slice(0, CONTENT_PREVIEW_LEN) +
                   (recentMemory[0].content.length > CONTENT_PREVIEW_LEN ? "..." : ""),
               },
+              suggested_buttons: [
+                { id: "create_reminder", title: "Create Reminder" },
+                { id: "new_memory", title: "New Memory" },
+              ],
             };
           }
         }
@@ -395,7 +415,7 @@ export async function handleToolCall(
         .from("memories")
         .select("id, title, content")
         .eq("user_id", userId)
-        .eq("content", fullContent)
+        .eq("content", generatedFullContent)
         .is("deleted_at", null)
         .limit(1);
 
@@ -403,12 +423,12 @@ export async function handleToolCall(
         console.log(
           `[finalize_memory] Duplicate detected - memory with same content already exists: ${existingMemories[0].id}`
         );
-        // Clear draft since memory already exists
+        // Clear draft since memory already exists, but store ID for reminder
         await supabase
           .from("conversation_sessions")
           .update({
             current_state: "CONVERSATION",
-            memory_draft: {},
+            memory_draft: { last_created_memory_id: existingMemories[0].id, last_created_memory_title: existingMemories[0].title },
             updated_at: new Date().toISOString(),
           })
           .eq("id", sessionId);
@@ -422,6 +442,10 @@ export async function handleToolCall(
               existingMemories[0].content.slice(0, CONTENT_PREVIEW_LEN) +
               (existingMemories[0].content.length > CONTENT_PREVIEW_LEN ? "..." : ""),
           },
+          suggested_buttons: [
+            { id: "create_reminder", title: "Create Reminder" },
+            { id: "new_memory", title: "New Memory" },
+          ],
         };
       }
 
@@ -440,22 +464,22 @@ export async function handleToolCall(
       }
 
       try {
-        const embedding = await generateEmbedding(fullContent);
+        const embedding = await generateEmbedding(generatedFullContent);
         const category = await assignCategory(
           userId,
-          categoryOverride ?? fullContent
+          categoryOverride ?? generatedFullContent
         );
         const tags = tagsOverride
           ? await getOrCreateTags(userId, tagsOverride)
-          : await extractAndAssignTags(userId, fullContent);
+          : await extractAndAssignTags(userId, generatedFullContent);
 
         const { data: memory, error: memError } = await supabase
           .from("memories")
           .insert({
             user_id: userId,
-            title: titleOverride ?? (draft.title as string) ?? "Untitled",
-            content: fullContent,
-            summary: (draft.summary as string) ?? null,
+            title: titleOverride ?? generatedTitle ?? "Untitled",
+            content: generatedFullContent,
+            summary: generatedSummary ?? null,
             embedding,
             category_id: category.id,
             source_platform: context.platform,
@@ -500,11 +524,12 @@ export async function handleToolCall(
         syncMemoryToStorage(userId, memory, category, tags).catch(() => {});
 
         // Clear draft and reset state ONLY after successful save
+        // Store last_created_memory_id so "Create Reminder" button can reference it
         await supabase
           .from("conversation_sessions")
           .update({
             current_state: "CONVERSATION",
-            memory_draft: {},
+            memory_draft: { last_created_memory_id: memory.id, last_created_memory_title: memory.title },
             updated_at: new Date().toISOString(),
           })
           .eq("id", sessionId);
@@ -514,11 +539,15 @@ export async function handleToolCall(
           memory: {
             id: memory.id,
             title: memory.title,
-            content_preview: fullContent.slice(0, CONTENT_PREVIEW_LEN) + (fullContent.length > CONTENT_PREVIEW_LEN ? "..." : ""),
+            content_preview: generatedFullContent.slice(0, CONTENT_PREVIEW_LEN) + (generatedFullContent.length > CONTENT_PREVIEW_LEN ? "..." : ""),
             category: category.name,
             tags: tags.map((t) => t.name),
             related_count: related.length,
           },
+          suggested_buttons: [
+            { id: "create_reminder", title: "Create Reminder" },
+            { id: "new_memory", title: "New Memory" },
+          ],
         };
       } catch (err) {
         // Clear saving flag so user can retry
@@ -815,6 +844,7 @@ interface DraftShape {
   full_content?: string;
   preview_category?: string;
   preview_tags?: string[];
+  saving_in_progress?: boolean;
 }
 
 interface MemoryNetworkRow {
