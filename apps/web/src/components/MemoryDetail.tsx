@@ -16,6 +16,18 @@ interface RelatedMemory {
   has_reminders?: boolean;
 }
 
+interface Attachment {
+  id: string;
+  file_name: string;
+  file_type: string;
+  file_size: number;
+  storage_path: string;
+  extracted_content: string | null;
+  extraction_status: string;
+  created_at: string;
+  url: string;
+}
+
 interface Reminder {
   id: string;
   title: string;
@@ -98,6 +110,14 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
   const [showReminderModal, setShowReminderModal] = useState(false);
   const [editingReminderId, setEditingReminderId] = useState<string | null>(null);
   const [reminderTitle, setReminderTitle] = useState("");
+
+  // Attachments state
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [loadingAttachments, setLoadingAttachments] = useState(true);
+  const [deletingAttachmentId, setDeletingAttachmentId] = useState<string | null>(null);
+  const [showUploadArea, setShowUploadArea] = useState(false);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
   const [reminderSummary, setReminderSummary] = useState("");
   const [reminderAt, setReminderAt] = useState<Date | null>(null);
   const [reminderChannels, setReminderChannels] = useState<string[]>(["email"]);
@@ -138,6 +158,138 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
   useEffect(() => {
     fetchReminders();
   }, [fetchReminders]);
+
+  // Fetch attachments for this memory
+  const fetchAttachments = useCallback(async () => {
+    setLoadingAttachments(true);
+    try {
+      const res = await fetch(`/api/attachments?memoryId=${memory.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setAttachments(data.attachments ?? []);
+      }
+    } catch (error) {
+      console.error("Failed to fetch attachments:", error);
+    } finally {
+      setLoadingAttachments(false);
+    }
+  }, [memory.id]);
+
+  useEffect(() => {
+    fetchAttachments();
+  }, [fetchAttachments]);
+
+  // Handle attachment upload
+  const handleAttachmentUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingFile(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("memoryId", memory.id);
+
+      const res = await fetch("/api/attachments/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Upload failed");
+      }
+
+      // Refresh attachments list
+      await fetchAttachments();
+      setShowUploadArea(false);
+    } catch (error) {
+      console.error("Failed to upload attachment:", error);
+      alert(error instanceof Error ? error.message : "Failed to upload file");
+    } finally {
+      setUploadingFile(false);
+      if (attachmentInputRef.current) {
+        attachmentInputRef.current.value = "";
+      }
+    }
+  };
+
+  // Handle attachment delete
+  const handleDeleteAttachment = async (attachmentId: string) => {
+    if (!confirm("Are you sure you want to delete this attachment?")) return;
+
+    setDeletingAttachmentId(attachmentId);
+    try {
+      const res = await fetch(`/api/attachments/${attachmentId}`, {
+        method: "DELETE",
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to delete attachment");
+      }
+
+      // Remove from local state
+      setAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
+    } catch (error) {
+      console.error("Failed to delete attachment:", error);
+      alert("Failed to delete attachment");
+    } finally {
+      setDeletingAttachmentId(null);
+    }
+  };
+
+  // Format file size
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  // Get file type icon
+  const getFileTypeIcon = (mimeType: string) => {
+    if (mimeType.startsWith("image/")) {
+      return (
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+          <circle cx="8.5" cy="8.5" r="1.5"/>
+          <polyline points="21 15 16 10 5 21"/>
+        </svg>
+      );
+    }
+    if (mimeType.includes("pdf")) {
+      return (
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+          <polyline points="10 9 9 9 8 9"/>
+        </svg>
+      );
+    }
+    if (mimeType.startsWith("video/")) {
+      return (
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polygon points="23 7 16 12 23 17 23 7"/>
+          <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+        </svg>
+      );
+    }
+    if (mimeType.startsWith("audio/")) {
+      return (
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M9 18V5l12-2v13"/>
+          <circle cx="6" cy="18" r="3"/>
+          <circle cx="18" cy="16" r="3"/>
+        </svg>
+      );
+    }
+    return (
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+      </svg>
+    );
+  };
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -903,6 +1055,158 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
         </footer>
       </article>
 
+      {/* Attachments Section */}
+      <section className="mt-8">
+        <div className="flex items-center justify-between mb-4">
+          <h2
+            className="text-lg font-display tracking-wider text-[var(--foreground)]"
+            style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
+          >
+            ATTACHMENTS
+            {attachments.length > 0 && (
+              <span className="ml-2 text-sm text-[var(--muted)]">({attachments.length})</span>
+            )}
+          </h2>
+          <button
+            type="button"
+            onClick={() => setShowUploadArea(!showUploadArea)}
+            className="btn-accent btn-sm"
+          >
+            + ADD FILE
+          </button>
+        </div>
+
+        {/* Upload Area */}
+        {showUploadArea && (
+          <div className="card-dystopian p-4 mb-4 border-dashed border-2 border-[var(--accent)]/30">
+            <input
+              ref={attachmentInputRef}
+              type="file"
+              onChange={handleAttachmentUpload}
+              className="hidden"
+              accept="image/*,.pdf,.txt,.md,.doc,.docx,video/*,audio/*"
+            />
+            <div className="text-center">
+              {uploadingFile ? (
+                <div className="flex items-center justify-center gap-2 py-4">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin text-[var(--accent)]">
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                  </svg>
+                  <span className="text-sm text-[var(--muted)]">Uploading...</span>
+                </div>
+              ) : (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mx-auto text-[var(--accent)] mb-2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                  </svg>
+                  <button
+                    type="button"
+                    onClick={() => attachmentInputRef.current?.click()}
+                    className="text-sm text-[var(--accent)] hover:text-[var(--accent-light)] transition-colors"
+                  >
+                    Click to select a file
+                  </button>
+                  <p className="text-xs text-[var(--muted)] mt-1">
+                    Images, PDFs, documents, videos, audio (max 10MB)
+                  </p>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {loadingAttachments ? (
+          <div className="text-sm text-[var(--muted)]">Loading attachments...</div>
+        ) : attachments.length > 0 ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {attachments.map((att) => (
+              <div
+                key={att.id}
+                className="card-dystopian p-3 flex items-start gap-3 group relative"
+              >
+                {/* Preview or Icon */}
+                {att.file_type.startsWith("image/") ? (
+                  <a
+                    href={att.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-shrink-0"
+                  >
+                    <img
+                      src={att.url}
+                      alt={att.file_name}
+                      className="w-16 h-16 rounded object-cover border border-[var(--card-border)] hover:border-[var(--accent)]/50 transition-colors"
+                    />
+                  </a>
+                ) : (
+                  <a
+                    href={att.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-shrink-0 w-16 h-16 rounded bg-[var(--background-alt)] border border-[var(--card-border)] hover:border-[var(--accent)]/50 transition-colors flex items-center justify-center text-[var(--muted)]"
+                  >
+                    {getFileTypeIcon(att.file_type)}
+                  </a>
+                )}
+
+                {/* File Info */}
+                <div className="flex-1 min-w-0">
+                  <a
+                    href={att.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm font-medium text-[var(--foreground)] hover:text-[var(--accent)] transition-colors truncate block"
+                  >
+                    {att.file_name}
+                  </a>
+                  <p className="text-xs text-[var(--muted)] mt-0.5">
+                    {formatFileSize(att.file_size)} • {att.file_type.split("/")[1]?.toUpperCase() || "FILE"}
+                  </p>
+                  {att.extracted_content && (
+                    <p className="text-xs text-[var(--muted-light)] mt-1 line-clamp-2">
+                      {att.extracted_content}
+                    </p>
+                  )}
+                </div>
+
+                {/* Delete Button */}
+                <button
+                  type="button"
+                  onClick={() => handleDeleteAttachment(att.id)}
+                  disabled={deletingAttachmentId === att.id}
+                  className="absolute top-2 right-2 p-1.5 rounded bg-[var(--card)] border border-[var(--card-border)] text-[var(--muted)] hover:text-red-400 hover:border-red-400/50 transition-all opacity-0 group-hover:opacity-100 disabled:opacity-50"
+                  title="Delete attachment"
+                >
+                  {deletingAttachmentId === att.id ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
+                      <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                    </svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M18 6 6 18"/>
+                      <path d="m6 6 12 12"/>
+                    </svg>
+                  )}
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="card-dystopian p-6 text-center">
+            <p className="text-sm text-[var(--muted)]">No attachments for this memory</p>
+            <button
+              type="button"
+              onClick={() => setShowUploadArea(true)}
+              className="mt-3 text-xs text-[var(--accent)] hover:text-[var(--accent-light)] transition-colors"
+            >
+              Add your first attachment
+            </button>
+          </div>
+        )}
+      </section>
+
       {/* Reminders Section */}
       <section className="mt-8">
         <div className="flex items-center justify-between mb-4">
@@ -915,7 +1219,7 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
           <button
             type="button"
             onClick={openReminderModalWithSuggestions}
-            className="text-xs text-[var(--accent)] hover:text-[var(--accent-light)] transition-colors"
+            className="btn-accent btn-sm"
           >
             + ADD REMINDER
           </button>
@@ -1025,39 +1329,13 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
           >
             RELATED MEMORIES
           </h2>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={handleRecomputeRelations}
-              disabled={isRecomputingRelations}
-              className="btn-outline btn-sm flex items-center gap-1.5"
-              title="Find similar memories automatically"
-            >
-              {isRecomputingRelations ? (
-                <>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
-                    <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-                  </svg>
-                  FINDING...
-                </>
-              ) : (
-                <>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="11" cy="11" r="8"/>
-                    <path d="m21 21-4.35-4.35"/>
-                  </svg>
-                  FIND RELATED
-                </>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowLinkModal(true)}
-              className="btn-accent btn-sm"
-            >
-              + LINK MEMORY
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setShowLinkModal(true)}
+            className="btn-accent btn-sm"
+          >
+            + LINK MEMORY
+          </button>
         </div>
 
         {relatedMemories.length > 0 ? (

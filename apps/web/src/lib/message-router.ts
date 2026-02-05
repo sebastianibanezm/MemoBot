@@ -8,6 +8,7 @@ import { verifyAndLinkAccount, resolveUserFromPlatform } from "./services/accoun
 import { getOrCreateSession, updateSessionHistory } from "./services/session";
 import { processMessage } from "@/agent/orchestrator";
 import type { Platform } from "./services/account-linking";
+import type { AttachmentRow } from "./services/attachment";
 
 /** Options for rich replies (buttons only supported on WhatsApp) */
 export interface ReplyOptions {
@@ -16,6 +17,14 @@ export interface ReplyOptions {
 
 export type ReplyFn = (message: string, options?: ReplyOptions) => Promise<void>;
 
+/** Attachment info passed from webhook handlers */
+export interface AttachmentInfo {
+  id: string;
+  fileName: string;
+  fileType: string;
+  extractedContent: string | null;
+}
+
 /**
  * Process an incoming message from a messaging platform.
  * 1. If text is "LINK 123456", verify code and link account → reply with result.
@@ -23,13 +32,15 @@ export type ReplyFn = (message: string, options?: ReplyOptions) => Promise<void>
  * 3. Else get/create session, run agent, update history, reply with response.
  * 
  * @param buttonId - Optional button ID if user clicked an interactive button (WhatsApp only)
+ * @param attachment - Optional attachment uploaded with the message
  */
 export async function processIncomingMessage(
   platform: Platform,
   platformUserId: string,
   text: string,
   replyFn: ReplyFn,
-  buttonId?: string
+  buttonId?: string,
+  attachment?: AttachmentRow
 ): Promise<void> {
   const trimmedText = text.trim();
 
@@ -71,12 +82,23 @@ export async function processIncomingMessage(
     content: string;
   }>;
 
+  // Convert attachment to info format for orchestrator
+  const attachmentInfo: AttachmentInfo | undefined = attachment
+    ? {
+        id: attachment.id,
+        fileName: attachment.file_name,
+        fileType: attachment.file_type,
+        extractedContent: attachment.extracted_content,
+      }
+    : undefined;
+
   const result = await processMessage(trimmedText, {
     userId,
     sessionId,
     platform,
     messageHistory,
     buttonId,  // Pass button ID to orchestrator
+    attachment: attachmentInfo,  // Pass attachment info to orchestrator
   });
 
   await updateSessionHistory(sessionId, [

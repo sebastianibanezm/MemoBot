@@ -2,13 +2,16 @@
  * WhatsApp Cloud API webhook (PLAN.md Phase 5).
  * GET: verification — hub.mode, hub.verify_token, hub.challenge; return challenge if token matches.
  * POST: verify X-Hub-Signature-256, parse entry/changes/messages, run message router, reply via Cloud API.
- * Supports text messages, interactive buttons, and voice notes (via Whisper transcription).
+ * Supports text messages, interactive buttons, voice notes (via Whisper transcription),
+ * and file attachments (images, documents, videos).
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
 import { processIncomingMessage } from "@/lib/message-router";
 import { transcribeAudio } from "@/lib/services/transcription";
+import { uploadAttachment, type AttachmentRow } from "@/lib/services/attachment";
+import { resolveUserFromPlatform } from "@/lib/services/account-linking";
 
 const GRAPH_API = "https://graph.facebook.com/v21.0";
 
@@ -71,6 +74,29 @@ async function processWithSessionQueue(
 
 function getEnv(name: string): string | undefined {
   return process.env[name];
+}
+
+/**
+ * Get file extension from MIME type.
+ */
+function getExtensionFromMime(mimeType: string): string {
+  const mimeToExt: Record<string, string> = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "application/pdf": "pdf",
+    "text/plain": "txt",
+    "text/markdown": "md",
+    "video/mp4": "mp4",
+    "video/webm": "webm",
+    "audio/mpeg": "mp3",
+    "audio/ogg": "ogg",
+    "audio/wav": "wav",
+    "application/msword": "doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  };
+  return mimeToExt[mimeType.split(";")[0]] || "bin";
 }
 
 /**
@@ -196,7 +222,7 @@ interface WhatsAppWebhookPayload {
         messages?: Array<{
           from?: string;
           id?: string;
-          type?: string;  // "text" | "interactive" | "audio"
+          type?: string;  // "text" | "interactive" | "audio" | "image" | "document" | "video"
           text?: { body?: string };
           interactive?: {
             type?: string;  // "button_reply"
@@ -208,6 +234,22 @@ interface WhatsAppWebhookPayload {
           audio?: {
             id?: string;        // Media ID to download the audio file
             mime_type?: string; // e.g., "audio/ogg; codecs=opus"
+          };
+          image?: {
+            id?: string;        // Media ID to download the image
+            mime_type?: string; // e.g., "image/jpeg"
+            caption?: string;   // Optional caption from user
+          };
+          document?: {
+            id?: string;        // Media ID to download the document
+            mime_type?: string; // e.g., "application/pdf"
+            filename?: string;  // Original filename
+            caption?: string;   // Optional caption from user
+          };
+          video?: {
+            id?: string;        // Media ID to download the video
+            mime_type?: string; // e.g., "video/mp4"
+            caption?: string;   // Optional caption from user
           };
         }>;
       };
@@ -343,9 +385,10 @@ export async function POST(request: NextRequest) {
           }
         };
         
-        // Extract message content from text, button click, OR voice note
+        // Extract message content from text, button click, voice note, or media attachments
         let text = "";
         let buttonId: string | undefined;
+        let attachment: AttachmentRow | undefined;
         
         if (msg.type === "text" && msg.text?.body) {
           text = msg.text.body.trim();
@@ -381,8 +424,152 @@ export async function POST(request: NextRequest) {
           
           text = transcription.text;
           console.log(`[WhatsApp] Voice note transcribed: "${text.slice(0, 100)}${text.length > 100 ? "..." : ""}"`);
+        } else if (msg.type === "image" && msg.image?.id) {
+          // Handle image attachment
+          console.log(`[WhatsApp] Image received from ${from}, media ID: ${msg.image.id}`);
+          
+          const userId = await resolveUserFromPlatform("whatsapp", from);
+          if (!userId) {
+            try {
+              await replyFn("Please link your account first before sending images. Send LINK followed by your 6-digit code.");
+            } catch (sendErr) {
+              console.error("[WhatsApp] Failed to send link prompt:", sendErr);
+            }
+            continue;
+          }
+          
+          const media = await downloadWhatsAppMedia(msg.image.id);
+          if (!media) {
+            try {
+              await replyFn("Sorry, I couldn't download your image. Please try again.");
+            } catch (sendErr) {
+              console.error("[WhatsApp] Failed to send media download error:", sendErr);
+            }
+            continue;
+          }
+          
+          try {
+            const result = await uploadAttachment({
+              userId,
+              buffer: media.buffer,
+              fileName: `image_${Date.now()}.${getExtensionFromMime(media.mimeType)}`,
+              mimeType: media.mimeType,
+            });
+            attachment = result.attachment;
+            
+            // Use caption as text, or extracted content, or default message
+            text = msg.image.caption?.trim() || 
+                   (result.analysisResult?.content ? `[Image: ${result.analysisResult.content}]` : "") ||
+                   "I'm sharing an image with you";
+            
+            console.log(`[WhatsApp] Image uploaded: ${attachment.id}, extracted: ${result.analysisResult?.status}`);
+          } catch (err) {
+            console.error("[WhatsApp] Failed to upload image:", err);
+            try {
+              await replyFn("Sorry, I couldn't process your image. Please try again.");
+            } catch (sendErr) {
+              console.error("[WhatsApp] Failed to send upload error:", sendErr);
+            }
+            continue;
+          }
+        } else if (msg.type === "document" && msg.document?.id) {
+          // Handle document attachment
+          console.log(`[WhatsApp] Document received from ${from}, media ID: ${msg.document.id}`);
+          
+          const userId = await resolveUserFromPlatform("whatsapp", from);
+          if (!userId) {
+            try {
+              await replyFn("Please link your account first before sending documents. Send LINK followed by your 6-digit code.");
+            } catch (sendErr) {
+              console.error("[WhatsApp] Failed to send link prompt:", sendErr);
+            }
+            continue;
+          }
+          
+          const media = await downloadWhatsAppMedia(msg.document.id);
+          if (!media) {
+            try {
+              await replyFn("Sorry, I couldn't download your document. Please try again.");
+            } catch (sendErr) {
+              console.error("[WhatsApp] Failed to send media download error:", sendErr);
+            }
+            continue;
+          }
+          
+          try {
+            const fileName = msg.document.filename || `document_${Date.now()}.${getExtensionFromMime(media.mimeType)}`;
+            const result = await uploadAttachment({
+              userId,
+              buffer: media.buffer,
+              fileName,
+              mimeType: media.mimeType,
+            });
+            attachment = result.attachment;
+            
+            // Use caption as text, or extracted content preview, or default message
+            const extractedPreview = result.analysisResult?.content?.slice(0, 200);
+            text = msg.document.caption?.trim() || 
+                   (extractedPreview ? `[Document "${fileName}": ${extractedPreview}...]` : `[Document: ${fileName}]`) ||
+                   `I'm sharing a document: ${fileName}`;
+            
+            console.log(`[WhatsApp] Document uploaded: ${attachment.id}, extracted: ${result.analysisResult?.status}`);
+          } catch (err) {
+            console.error("[WhatsApp] Failed to upload document:", err);
+            try {
+              await replyFn("Sorry, I couldn't process your document. Please try again.");
+            } catch (sendErr) {
+              console.error("[WhatsApp] Failed to send upload error:", sendErr);
+            }
+            continue;
+          }
+        } else if (msg.type === "video" && msg.video?.id) {
+          // Handle video attachment
+          console.log(`[WhatsApp] Video received from ${from}, media ID: ${msg.video.id}`);
+          
+          const userId = await resolveUserFromPlatform("whatsapp", from);
+          if (!userId) {
+            try {
+              await replyFn("Please link your account first before sending videos. Send LINK followed by your 6-digit code.");
+            } catch (sendErr) {
+              console.error("[WhatsApp] Failed to send link prompt:", sendErr);
+            }
+            continue;
+          }
+          
+          const media = await downloadWhatsAppMedia(msg.video.id);
+          if (!media) {
+            try {
+              await replyFn("Sorry, I couldn't download your video. Please try again.");
+            } catch (sendErr) {
+              console.error("[WhatsApp] Failed to send media download error:", sendErr);
+            }
+            continue;
+          }
+          
+          try {
+            const result = await uploadAttachment({
+              userId,
+              buffer: media.buffer,
+              fileName: `video_${Date.now()}.${getExtensionFromMime(media.mimeType)}`,
+              mimeType: media.mimeType,
+            }, false); // Don't analyze video content (not supported yet)
+            attachment = result.attachment;
+            
+            // Use caption as text or default message
+            text = msg.video.caption?.trim() || "I'm sharing a video with you";
+            
+            console.log(`[WhatsApp] Video uploaded: ${attachment.id}`);
+          } catch (err) {
+            console.error("[WhatsApp] Failed to upload video:", err);
+            try {
+              await replyFn("Sorry, I couldn't process your video. Please try again.");
+            } catch (sendErr) {
+              console.error("[WhatsApp] Failed to send upload error:", sendErr);
+            }
+            continue;
+          }
         } else {
-          // Skip unsupported message types (images, videos, documents, etc.)
+          // Skip truly unsupported message types (stickers, contacts, location, etc.)
           continue;
         }
         
@@ -392,7 +579,7 @@ export async function POST(request: NextRequest) {
         const sessionKey = `whatsapp:${from}`;
         await processWithSessionQueue(sessionKey, async () => {
           try {
-            await processIncomingMessage("whatsapp", from, text, replyFn, buttonId);
+            await processIncomingMessage("whatsapp", from, text, replyFn, buttonId, attachment);
           } catch (err) {
             console.error("WhatsApp webhook processIncomingMessage error:", err);
             try {

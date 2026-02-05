@@ -1,11 +1,12 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { getOrCreateSession, updateSessionHistory } from "@/lib/services/session";
-import { processMessage } from "@/agent/orchestrator";
+import { processMessage, type AttachmentInfo } from "@/agent/orchestrator";
+import { getAttachmentById } from "@/lib/services/attachment";
 
 /**
  * POST /api/chat — Web chat endpoint for MemoBot.
- * Body: { message: string }
+ * Body: { message: string, attachmentIds?: string[] }
  * Returns: { reply: string, memories?: Array<{ id, title, content_preview }> }
  */
 export async function POST(request: Request) {
@@ -17,6 +18,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const message = body.message?.trim();
+    const attachmentIds = body.attachmentIds as string[] | undefined;
 
     if (!message || typeof message !== "string") {
       return NextResponse.json(
@@ -41,12 +43,27 @@ export async function POST(request: Request) {
       content: string;
     }>;
 
+    // Get attachment info if provided (use first attachment for now)
+    let attachment: AttachmentInfo | undefined;
+    if (attachmentIds && attachmentIds.length > 0) {
+      const att = await getAttachmentById(attachmentIds[0], userId);
+      if (att) {
+        attachment = {
+          id: att.id,
+          fileName: att.file_name,
+          fileType: att.file_type,
+          extractedContent: att.extracted_content,
+        };
+      }
+    }
+
     // Process the message through the agent orchestrator
     const { reply, retrievedMemories, createdMemory } = await processMessage(message, {
       userId,
       sessionId,
       platform,
       messageHistory,
+      attachment,
     });
 
     // Update session history with the new exchange

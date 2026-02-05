@@ -24,6 +24,7 @@ import {
   cancelReminder,
 } from "../lib/services/reminders";
 import { extractRelevantDate } from "../lib/services/date-extraction";
+import { linkAttachmentsToMemory } from "../lib/services/attachment";
 
 function getOpenAIClient(): OpenAI {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -37,6 +38,7 @@ export interface ToolContext {
   userId: string;
   sessionId: string;
   platform: "whatsapp" | "telegram" | "web";
+  attachmentId?: string;  // ID of attachment to link to created memory
 }
 
 async function generateTitleAndSummary(content: string): Promise<{ title: string; summary: string }> {
@@ -196,15 +198,23 @@ export async function handleToolCall(
       const initialContent = toolInput.initial_content ? String(toolInput.initial_content) : undefined;
       console.log("[start_memory_capture] Starting capture with initial content:", initialContent?.slice(0, 100));
       
+      // Store attachment ID in draft so it persists across messages
+      const draftData: Record<string, unknown> = {
+        content_parts: initialContent ? [initialContent] : [],
+        started_at: new Date().toISOString(),
+        enrichment_count: 0,
+      };
+      
+      if (context.attachmentId) {
+        draftData.attachment_id = context.attachmentId;
+        console.log("[start_memory_capture] Storing attachment ID in draft:", context.attachmentId);
+      }
+      
       const { error: updateError } = await supabase
         .from("conversation_sessions")
         .update({
           current_state: "MEMORY_CAPTURE",
-          memory_draft: {
-            content_parts: initialContent ? [initialContent] : [],
-            started_at: new Date().toISOString(),
-            enrichment_count: 0,
-          },
+          memory_draft: draftData,
           updated_at: new Date().toISOString(),
         })
         .eq("id", sessionId);
@@ -516,6 +526,21 @@ export async function handleToolCall(
         await supabase.from("memory_tags").insert(
           tags.map((t) => ({ memory_id: memory.id, tag_id: t.id }))
         );
+
+        // Link attachment to memory - check context first, then draft
+        const attachmentIdToLink = context.attachmentId || (draft?.attachment_id as string | undefined);
+        if (attachmentIdToLink) {
+          try {
+            await linkAttachmentsToMemory([attachmentIdToLink], memory.id, userId);
+            console.log(`[finalize_memory] Linked attachment ${attachmentIdToLink} to memory ${memory.id}`);
+          } catch (attError) {
+            console.error(
+              `[finalize_memory] Failed to link attachment ${attachmentIdToLink}:`,
+              attError instanceof Error ? attError.message : attError
+            );
+            // Non-fatal - memory was still saved
+          }
+        }
 
         // Find and create relationships to similar memories
         let related: { id: string; similarity_score: number }[] = [];

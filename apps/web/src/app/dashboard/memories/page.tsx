@@ -17,6 +17,7 @@ interface Memory {
   updated_at: string;
   occurred_at: string | null;
   has_reminders?: boolean;
+  attachment_count?: number;
 }
 
 interface Category {
@@ -466,6 +467,16 @@ export default function MemoriesPage() {
                           </svg>
                         </span>
                       )}
+                      {(m.attachment_count ?? 0) > 0 && (
+                        <span className="flex-shrink-0 text-[var(--muted)] flex items-center gap-0.5" title={`${m.attachment_count} attachment${m.attachment_count === 1 ? '' : 's'}`}>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                          </svg>
+                          {m.attachment_count > 1 && (
+                            <span className="text-[10px]">{m.attachment_count}</span>
+                          )}
+                        </span>
+                      )}
                     </div>
                     <p className="text-sm text-[var(--muted)] mt-1 line-clamp-2">
                       {m.summary || m.content}
@@ -536,6 +547,16 @@ export default function MemoriesPage() {
                         <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>
                         <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>
                       </svg>
+                    </span>
+                  )}
+                  {(m.attachment_count ?? 0) > 0 && (
+                    <span className="flex-shrink-0 text-[var(--muted)] flex items-center gap-0.5" title={`${m.attachment_count} attachment${m.attachment_count === 1 ? '' : 's'}`}>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                      </svg>
+                      {m.attachment_count > 1 && (
+                        <span className="text-[10px]">{m.attachment_count}</span>
+                      )}
                     </span>
                   )}
                 </div>

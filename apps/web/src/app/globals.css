@@ -16,6 +16,7 @@
   --accent: #00b34a;
   --accent-dark: #009940;
   --accent-muted: rgba(0, 179, 74, 0.15);
+  --accent-rgb: 0, 179, 74;
   
   /* Card styling */
   --card: rgba(10, 10, 10, 0.8);

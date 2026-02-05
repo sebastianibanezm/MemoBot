@@ -35,12 +35,21 @@ function convertToolsToOpenAI(): OpenAI.Chat.Completions.ChatCompletionTool[] {
   }));
 }
 
+/** Attachment info passed to the orchestrator */
+export interface AttachmentInfo {
+  id: string;
+  fileName: string;
+  fileType: string;
+  extractedContent: string | null;
+}
+
 export interface ConversationContext {
   userId: string;
   sessionId: string;
   platform: "whatsapp" | "telegram" | "web";
   messageHistory: Array<{ role: "user" | "assistant"; content: string }>;
   buttonId?: string;  // Button ID if user clicked an interactive button (WhatsApp only)
+  attachment?: AttachmentInfo;  // Attachment info if user sent a file
 }
 
 export interface RetrievedMemory {
@@ -69,10 +78,19 @@ export async function processMessage(
   userMessage: string,
   context: ConversationContext
 ): Promise<ProcessMessageResult> {
-  const { userId, sessionId, platform, messageHistory, buttonId } = context;
+  const { userId, sessionId, platform, messageHistory, buttonId, attachment } = context;
   
   // Map button IDs to commands the agent understands
   let effectiveMessage = userMessage;
+  
+  // If there's an attachment, include its context in the message
+  if (attachment) {
+    const attachmentContext = attachment.extractedContent
+      ? `\n\n[Attached file: "${attachment.fileName}" (${attachment.fileType}). Extracted content: ${attachment.extractedContent}]`
+      : `\n\n[Attached file: "${attachment.fileName}" (${attachment.fileType})]`;
+    effectiveMessage = userMessage + attachmentContext;
+  }
+  
   if (buttonId === "save_memory") {
     effectiveMessage = "Save it";
   } else if (buttonId === "create_reminder") {
@@ -167,6 +185,7 @@ export async function processMessage(
         userId,
         sessionId,
         platform,
+        attachmentId: attachment?.id,
       });
 
       // Capture memories from search_memories tool calls

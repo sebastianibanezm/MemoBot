@@ -22,8 +22,9 @@ export interface TagRow {
   usage_count: number;
 }
 
-// Similarity threshold for tag matching (slightly higher than categories since tags are more specific)
-const SIMILARITY_THRESHOLD = 0.80;
+// Lowered from 0.80 to improve tag reuse - 0.60 catches more semantic matches
+// Kept slightly higher than categories (0.55) since tags are more specific
+const SIMILARITY_THRESHOLD = 0.60;
 
 function normalizeTagName(name: string): string {
   return name
@@ -181,17 +182,35 @@ export async function getOrCreateTags(
 
 /**
  * Extract meaningful tag names from content using AI.
+ * If existing tags are provided, the AI will prefer to use them.
  */
-export async function extractTagNamesFromContent(content: string, maxTags = 5): Promise<string[]> {
+export async function extractTagNamesFromContent(
+  content: string,
+  maxTags = 5,
+  existingTagNames: string[] = []
+): Promise<string[]> {
   try {
     const openai = getOpenAIClient();
+    
+    // Build system prompt based on whether we have existing tags
+    let systemPrompt: string;
+    if (existingTagNames.length > 0) {
+      systemPrompt = `You extract meaningful topic tags from text. The user already has these tags: [${existingTagNames.slice(0, 50).join(", ")}].
+
+IMPORTANT: Strongly prefer to use existing tags from the list above if they are relevant to the content. Only suggest new tags if NONE of the existing tags apply.
+
+Return only a JSON array of up to ${maxTags} short, relevant tags (1-3 words each). If using existing tags, return them EXACTLY as shown above. Tags should be meaningful topics, themes, or categories.`;
+    } else {
+      systemPrompt = `You extract meaningful topic tags from text. Return only a JSON array of ${maxTags} short, relevant tags (1-3 words each). Tags should be meaningful topics, themes, or categories - NOT random words from the text. Examples of good tags: "family", "travel", "work project", "health", "birthday", "legal documents".`;
+    }
+    
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       max_tokens: 100,
       messages: [
         {
           role: "system",
-          content: `You extract meaningful topic tags from text. Return only a JSON array of ${maxTags} short, relevant tags (1-3 words each). Tags should be meaningful topics, themes, or categories - NOT random words from the text. Examples of good tags: "family", "travel", "work project", "health", "birthday", "legal documents".`,
+          content: systemPrompt,
         },
         {
           role: "user",
@@ -222,12 +241,23 @@ export async function extractTagNamesFromContent(content: string, maxTags = 5): 
 
 /**
  * Extract tags from content and get-or-create tag rows for the user.
+ * Fetches existing tags first so AI can prefer reusing them.
  */
 export async function extractAndAssignTags(
   userId: string,
   content: string
 ): Promise<TagRow[]> {
-  const names = await extractTagNamesFromContent(content, 5);
+  const supabase = createServerSupabase();
+  
+  // Fetch existing tag names for AI awareness
+  const { data: existingTags } = await supabase
+    .from("tags")
+    .select("name")
+    .eq("user_id", userId);
+  
+  const existingTagNames = existingTags?.map((t) => t.name) ?? [];
+  
+  const names = await extractTagNamesFromContent(content, 5, existingTagNames);
   return getOrCreateTags(userId, names.length ? names : ["general"]);
 }
 
@@ -240,7 +270,9 @@ export async function previewTags(
   existingTags: { name: string; embedding?: number[] | null }[],
   maxTags = 5
 ): Promise<string[]> {
-  const extractedNames = await extractTagNamesFromContent(content, maxTags);
+  // Pass existing tag names to AI for better reuse
+  const existingTagNames = existingTags.map((t) => t.name);
+  const extractedNames = await extractTagNamesFromContent(content, maxTags, existingTagNames);
   if (!extractedNames.length) return ["general"];
 
   const tagsWithEmbeddings = existingTags.filter(
