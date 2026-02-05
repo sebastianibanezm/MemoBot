@@ -4,6 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { syncUserToSupabase } from "@/lib/sync-user";
 import { UserButton } from "@clerk/nextjs";
+import { SubscriptionBadge } from "@/components/SubscriptionBadge";
 
 export const dynamic = "force-dynamic";
 
@@ -79,6 +80,7 @@ export default async function DashboardLayout({
 
         {/* User Button */}
         <div className="flex items-center gap-3">
+          <SubscriptionBadge />
           <span className="text-xs text-[var(--muted)] tracking-wider hidden sm:block">
             <span className="text-[var(--accent)]">//</span> CONNECTED
           </span>

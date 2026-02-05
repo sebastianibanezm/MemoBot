@@ -10,7 +10,7 @@ import { processMessage } from "@/agent/orchestrator";
 import type { Platform } from "./services/account-linking";
 import type { AttachmentRow } from "./services/attachment";
 
-/** Options for rich replies (buttons only supported on WhatsApp) */
+/** Options for rich replies (buttons supported on WhatsApp and Telegram) */
 export interface ReplyOptions {
   buttons?: Array<{ id: string; title: string }>;
 }
@@ -106,8 +106,8 @@ export async function processIncomingMessage(
     { role: "assistant", content: result.reply },
   ]);
 
-  // Pass suggested buttons to reply (only works on WhatsApp)
+  // Pass suggested buttons to reply (works on WhatsApp and Telegram)
   await replyFn(result.reply, {
-    buttons: platform === "whatsapp" ? result.suggestedButtons : undefined,
+    buttons: (platform === "whatsapp" || platform === "telegram") ? result.suggestedButtons : undefined,
   });
 }

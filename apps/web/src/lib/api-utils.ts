@@ -6,9 +6,15 @@ import {
   rateLimitHeaders,
   RateLimitType,
 } from "./rate-limit";
+import { requireTier } from "./subscription-check";
+import { SubscriptionTier } from "./services/subscription";
 
 interface RateLimitOptions {
   type?: RateLimitType;
+}
+
+interface SubscriptionOptions {
+  requiredTier?: SubscriptionTier;
 }
 
 /**
@@ -74,4 +80,80 @@ export function withRateLimit<T extends NextRequest>(
 
     return response;
   };
+}
+
+/**
+ * Wrapper for API route handlers that requires a subscription tier.
+ *
+ * Usage:
+ * ```ts
+ * export const POST = withSubscription(async (request) => {
+ *   // Your handler code - only runs for subscribed users
+ *   return NextResponse.json({ data });
+ * }, { requiredTier: "pro" });
+ * ```
+ */
+export function withSubscription<T extends NextRequest>(
+  handler: (request: T) => Promise<NextResponse>,
+  options: SubscriptionOptions = {}
+) {
+  const { requiredTier = "pro" } = options;
+
+  return async (request: T): Promise<NextResponse> => {
+    // Get user ID - must be authenticated
+    let userId: string | null = null;
+    try {
+      const authResult = await auth();
+      userId = authResult.userId;
+    } catch {
+      // Not authenticated
+    }
+
+    if (!userId) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    // Check subscription tier
+    const hasAccess = await requireTier(userId, requiredTier);
+
+    if (!hasAccess) {
+      return NextResponse.json(
+        {
+          error: "Subscription required",
+          message: `This feature requires a ${requiredTier} subscription or higher.`,
+          requiredTier,
+        },
+        { status: 403 }
+      );
+    }
+
+    // Call the actual handler
+    return handler(request);
+  };
+}
+
+/**
+ * Combined wrapper for rate limiting + subscription check.
+ *
+ * Usage:
+ * ```ts
+ * export const POST = withRateLimitAndSubscription(async (request) => {
+ *   // Your handler code
+ *   return NextResponse.json({ data });
+ * }, { type: "chat", requiredTier: "pro" });
+ * ```
+ */
+export function withRateLimitAndSubscription<T extends NextRequest>(
+  handler: (request: T) => Promise<NextResponse>,
+  options: RateLimitOptions & SubscriptionOptions = {}
+) {
+  const { type = "api", requiredTier = "pro" } = options;
+
+  return withRateLimit(
+    withSubscription(handler, { requiredTier }),
+    { type }
+  );
 }
