@@ -96,6 +96,7 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
   // Reminder state
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [showReminderModal, setShowReminderModal] = useState(false);
+  const [editingReminderId, setEditingReminderId] = useState<string | null>(null);
   const [reminderTitle, setReminderTitle] = useState("");
   const [reminderSummary, setReminderSummary] = useState("");
   const [reminderAt, setReminderAt] = useState<Date | null>(null);
@@ -417,8 +418,75 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
     }
   };
 
+  const openEditReminderModal = (reminder: Reminder) => {
+    // Only allow editing pending reminders
+    if (reminder.status !== "pending") return;
+    
+    setEditingReminderId(reminder.id);
+    setReminderTitle(reminder.title);
+    setReminderSummary(reminder.summary || "");
+    setReminderAt(new Date(reminder.remind_at));
+    setReminderChannels(reminder.channels);
+    setReminderError("");
+    setShowReminderModal(true);
+  };
+
+  const handleUpdateReminder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingReminderId) return;
+    
+    setReminderError("");
+
+    if (!reminderTitle.trim()) {
+      setReminderError("Please enter a title");
+      return;
+    }
+    if (!reminderAt) {
+      setReminderError("Please select a date and time");
+      return;
+    }
+    if (reminderChannels.length === 0) {
+      setReminderError("Please select at least one notification channel");
+      return;
+    }
+
+    setIsCreatingReminder(true);
+
+    try {
+      const res = await fetch(`/api/reminders/${editingReminderId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: reminderTitle.trim(),
+          summary: reminderSummary.trim() || null,
+          remind_at: reminderAt.toISOString(),
+          channels: reminderChannels,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to update reminder");
+      }
+
+      // Reset form and close modal
+      setReminderTitle("");
+      setReminderSummary("");
+      setReminderAt(null);
+      setReminderChannels(["email"]);
+      setEditingReminderId(null);
+      setShowReminderModal(false);
+      fetchReminders();
+    } catch (err) {
+      setReminderError(err instanceof Error ? err.message : "Failed to update reminder");
+    } finally {
+      setIsCreatingReminder(false);
+    }
+  };
+
   const openReminderModalWithSuggestions = async () => {
     // Reset form first
+    setEditingReminderId(null);
     setReminderTitle("");
     setReminderSummary("");
     setReminderAt(null);
@@ -516,9 +584,12 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
                 <button
                   type="button"
                   onClick={() => setShowDeleteConfirm(true)}
-                  className="btn-danger btn-sm"
+                  className="btn-danger btn-sm flex items-center justify-center"
+                  title="Delete memory"
                 >
-                  DELETE
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
                 </button>
               </div>
             )}
@@ -720,9 +791,18 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
                 type="button"
                 onClick={handleDelete}
                 disabled={isDeleting}
-                className="btn-danger-solid btn-sm"
+                className="btn-danger-solid btn-sm flex items-center gap-1"
               >
-                {isDeleting ? "DELETING..." : "YES, DELETE"}
+                {isDeleting ? (
+                  "DELETING..."
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    CONFIRM
+                  </>
+                )}
               </button>
               <button
                 type="button"
@@ -846,10 +926,12 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
           <div className="space-y-2">
             {reminders.map((reminder) => {
               const isPast = reminder.status !== "pending" || new Date(reminder.remind_at) <= new Date();
+              const isEditable = reminder.status === "pending" && !isPast;
               return (
                 <div
                   key={reminder.id}
-                  className={`card-dystopian p-3 flex items-center justify-between gap-4 ${isPast ? "opacity-60" : ""}`}
+                  onClick={() => isEditable && openEditReminderModal(reminder)}
+                  className={`card-dystopian p-3 flex items-center justify-between gap-4 ${isPast ? "opacity-60" : ""} ${isEditable ? "cursor-pointer hover:border-[var(--accent)]/50 transition-colors" : ""}`}
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
@@ -864,8 +946,22 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
                       </span>
                       <div className="flex items-center gap-1">
                         {reminder.channels.map((channel) => (
-                          <span key={channel} className="text-[var(--muted)]" title={channel}>
-                            {channel === "email" ? "📧" : channel === "whatsapp" ? "📱" : "✈️"}
+                          <span key={channel} className="text-[var(--accent)]" title={channel}>
+                            {channel === "email" ? (
+                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <rect width="20" height="16" x="2" y="4" rx="2"/>
+                                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+                              </svg>
+                            ) : channel === "whatsapp" ? (
+                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+                              </svg>
+                            ) : (
+                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="m22 2-7 20-4-9-9-4Z"/>
+                                <path d="M22 2 11 13"/>
+                              </svg>
+                            )}
                           </span>
                         ))}
                       </div>
@@ -891,10 +987,16 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
                     {!isPast && (
                       <button
                         type="button"
-                        onClick={() => handleDeleteReminder(reminder.id)}
-                        className="text-[10px] text-[var(--muted)] hover:text-red-400 mt-1"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteReminder(reminder.id);
+                        }}
+                        className="text-[var(--muted)] hover:text-red-400 mt-1"
+                        title="Delete reminder"
                       >
-                        DELETE
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
                       </button>
                     )}
                   </div>
@@ -1126,7 +1228,7 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
         </div>
       )}
 
-      {/* Create Reminder Modal */}
+      {/* Create/Edit Reminder Modal */}
       {showReminderModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
           <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg w-full max-w-md mx-4 overflow-hidden">
@@ -1135,12 +1237,13 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
                 className="text-lg font-display tracking-wider text-[var(--foreground)]"
                 style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
               >
-                SET REMINDER
+                {editingReminderId ? "EDIT REMINDER" : "SET REMINDER"}
               </h3>
               <button
                 type="button"
                 onClick={() => {
                   setShowReminderModal(false);
+                  setEditingReminderId(null);
                   setReminderTitle("");
                   setReminderSummary("");
                   setReminderAt(null);
@@ -1156,15 +1259,15 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
               </button>
             </div>
 
-            <form onSubmit={handleCreateReminder} className="p-4 space-y-4">
+            <form onSubmit={editingReminderId ? handleUpdateReminder : handleCreateReminder} className="p-4 space-y-4">
               {reminderError && (
                 <div className="p-3 bg-red-500/10 border border-red-500/30 rounded text-xs text-red-400">
                   {reminderError}
                 </div>
               )}
 
-              {/* AI Analysis Loading */}
-              {isAnalyzingReminder && (
+              {/* AI Analysis Loading (only for new reminders) */}
+              {isAnalyzingReminder && !editingReminderId && (
                 <div className="p-3 bg-[var(--accent)]/10 border border-[var(--accent)]/30 rounded flex items-center gap-2">
                   <div className="w-4 h-4 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
                   <span className="text-xs text-[var(--accent)]">Analyzing memory for suggestions...</span>
@@ -1254,12 +1357,15 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
                   disabled={isCreatingReminder}
                   className="btn-accent text-xs flex-1 disabled:opacity-50"
                 >
-                  {isCreatingReminder ? "CREATING..." : "SET REMINDER"}
+                  {isCreatingReminder 
+                    ? (editingReminderId ? "UPDATING..." : "CREATING...") 
+                    : (editingReminderId ? "UPDATE REMINDER" : "SET REMINDER")}
                 </button>
                 <button
                   type="button"
                   onClick={() => {
                     setShowReminderModal(false);
+                    setEditingReminderId(null);
                     setReminderTitle("");
                     setReminderSummary("");
                     setReminderAt(null);

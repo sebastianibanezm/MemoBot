@@ -101,7 +101,16 @@ export async function handleToolCall(
         });
         
         if (hybridData && hybridData.length > 0) {
-          return formatHybridResults(hybridData as HybridMemoryRow[]);
+          // Filter out low-relevance results - hybrid scores below this threshold are likely irrelevant
+          // RRF scores typically range from 0 to ~0.04 (with rrf_k=50), so 0.01 is a reasonable minimum
+          const MIN_HYBRID_SCORE = 0.01;
+          const filteredData = (hybridData as HybridMemoryRow[]).filter(
+            (m) => m.score && m.score >= MIN_HYBRID_SCORE
+          );
+          
+          if (filteredData.length > 0) {
+            return formatHybridResults(filteredData);
+          }
         }
         
         return { memories: [], message: "No memories found" };
@@ -184,7 +193,9 @@ export async function handleToolCall(
 
     case "start_memory_capture": {
       const initialContent = toolInput.initial_content ? String(toolInput.initial_content) : undefined;
-      await supabase
+      console.log("[start_memory_capture] Starting capture with initial content:", initialContent?.slice(0, 100));
+      
+      const { error: updateError } = await supabase
         .from("conversation_sessions")
         .update({
           current_state: "MEMORY_CAPTURE",
@@ -196,6 +207,13 @@ export async function handleToolCall(
           updated_at: new Date().toISOString(),
         })
         .eq("id", sessionId);
+      
+      if (updateError) {
+        console.error("[start_memory_capture] Failed to update session:", updateError.message);
+        return { error: "Failed to start memory capture" };
+      }
+      
+      console.log("[start_memory_capture] Successfully started capture for session:", sessionId);
       return {
         status: "capture_started",
         message: initialContent
@@ -227,14 +245,23 @@ export async function handleToolCall(
     }
 
     case "generate_memory_draft": {
+      console.log("[generate_memory_draft] Generating draft for session:", sessionId);
       const { data: session } = await supabase
         .from("conversation_sessions")
-        .select("memory_draft")
+        .select("memory_draft, current_state")
         .eq("id", sessionId)
         .single();
+      
+      console.log("[generate_memory_draft] Current state:", session?.current_state);
       const draft = session?.memory_draft as DraftShape | null;
       const parts = draft?.content_parts;
-      if (!Array.isArray(parts) || parts.length === 0) return { error: "No content captured yet" };
+      
+      if (!Array.isArray(parts) || parts.length === 0) {
+        console.log("[generate_memory_draft] No content captured yet");
+        return { error: "No content captured yet. Please start by telling me what you'd like to remember." };
+      }
+      
+      console.log("[generate_memory_draft] Found", parts.length, "content parts");
       const fullContent = parts.join("\n\n");
 
       const { title, summary } = await generateTitleAndSummary(fullContent);
@@ -294,38 +321,76 @@ export async function handleToolCall(
         ? (toolInput.tags_override as string[])
         : undefined;
 
-      // Read and CLEAR the draft atomically to prevent duplicate finalization
-      // Use a conditional update to ensure we only process if draft exists
+      // Read the draft
       const { data: session } = await supabase
         .from("conversation_sessions")
-        .select("memory_draft")
+        .select("memory_draft, current_state")
         .eq("id", sessionId)
         .single();
+      
+      const currentState = session?.current_state;
       const draft = session?.memory_draft as DraftShape | null;
       const fullContent = draft?.full_content;
-      if (!fullContent) return { error: "No draft to finalize" };
-
-      // Immediately clear the draft and set state to FINALIZING to prevent race conditions
-      // This ensures that even if finalize_memory is called again, it won't create duplicates
-      const { data: updateResult, error: clearError } = await supabase
-        .from("conversation_sessions")
-        .update({
-          current_state: "FINALIZING",
-          memory_draft: {},
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", sessionId)
-        .neq("current_state", "FINALIZING") // Only update if not already finalizing
-        .select("id");
-
-      // If no rows were updated, it means the session is already being finalized
-      if (clearError || !updateResult || updateResult.length === 0) {
-        console.log("[finalize_memory] Draft already being processed or finalized");
-        return { error: "Memory is already being saved" };
+      
+      // Check if already saving (using a flag in the draft)
+      if (draft?.saving_in_progress) {
+        console.log("[finalize_memory] Memory is currently being saved, please wait");
+        return { status: "saving_in_progress", message: "Memory is being saved, please wait..." };
+      }
+      
+      // Check if proper flow was followed - should be in MEMORY_DRAFT state
+      if (currentState !== "MEMORY_DRAFT" && currentState !== "MEMORY_ENRICHMENT" && currentState !== "MEMORY_CAPTURE") {
+        console.log(`[finalize_memory] Invalid state for finalization: ${currentState}`);
+        return { 
+          error: "no_draft", 
+          message: "No memory draft to save. Please tell me what you'd like to remember first, and I'll help you capture it." 
+        };
+      }
+      
+      if (!fullContent) {
+        // Draft exists but full_content not generated yet - need to call generate_memory_draft first
+        if (draft?.content_parts && Array.isArray(draft.content_parts) && draft.content_parts.length > 0) {
+          console.log("[finalize_memory] Draft has content_parts but no full_content - need to generate draft first");
+          return { 
+            error: "draft_not_generated", 
+            message: "The memory draft needs to be generated first. Let me create a draft for you to review." 
+          };
+        }
+        
+        // Check if a memory was recently created (draft might have been cleared)
+        const { data: recentMemory } = await supabase
+          .from("memories")
+          .select("id, title, content, created_at")
+          .eq("user_id", userId)
+          .eq("source_platform", context.platform)
+          .is("deleted_at", null)
+          .order("created_at", { ascending: false })
+          .limit(1);
+        
+        if (recentMemory && recentMemory.length > 0) {
+          // Check if this memory was created in the last 60 seconds
+          const createdAt = new Date(recentMemory[0].created_at || 0);
+          const now = new Date();
+          const diffSeconds = (now.getTime() - createdAt.getTime()) / 1000;
+          
+          if (diffSeconds < 60) {
+            // Memory was likely just saved
+            return {
+              status: "memory_saved",
+              memory: {
+                id: recentMemory[0].id,
+                title: recentMemory[0].title,
+                content_preview:
+                  recentMemory[0].content.slice(0, CONTENT_PREVIEW_LEN) +
+                  (recentMemory[0].content.length > CONTENT_PREVIEW_LEN ? "..." : ""),
+              },
+            };
+          }
+        }
+        return { error: "no_draft", message: "No memory draft to save. Please tell me what you'd like to remember." };
       }
 
-      // Check for duplicate content before creating memory
-      // This prevents duplicates if the same content was already saved
+      // Check for duplicate content FIRST before doing anything else
       const { data: existingMemories } = await supabase
         .from("memories")
         .select("id, title, content")
@@ -338,17 +403,18 @@ export async function handleToolCall(
         console.log(
           `[finalize_memory] Duplicate detected - memory with same content already exists: ${existingMemories[0].id}`
         );
-        // Reset state to CONVERSATION since we're not creating a new memory
+        // Clear draft since memory already exists
         await supabase
           .from("conversation_sessions")
           .update({
             current_state: "CONVERSATION",
+            memory_draft: {},
             updated_at: new Date().toISOString(),
           })
           .eq("id", sessionId);
 
         return {
-          status: "memory_already_exists",
+          status: "memory_saved",
           memory: {
             id: existingMemories[0].id,
             title: existingMemories[0].title,
@@ -359,85 +425,113 @@ export async function handleToolCall(
         };
       }
 
-      const embedding = await generateEmbedding(fullContent);
-      const category = await assignCategory(
-        userId,
-        categoryOverride ?? fullContent
-      );
-      const tags = tagsOverride
-        ? await getOrCreateTags(userId, tagsOverride)
-        : await extractAndAssignTags(userId, fullContent);
-
-      const { data: memory, error: memError } = await supabase
-        .from("memories")
-        .insert({
-          user_id: userId,
-          title: titleOverride ?? (draft.title as string) ?? "Untitled",
-          content: fullContent,
-          summary: (draft.summary as string) ?? null,
-          embedding,
-          category_id: category.id,
-          source_platform: context.platform,
-        })
-        .select()
-        .single();
-
-      if (memError) {
-        // Reset state to CONVERSATION on error
-        await supabase
-          .from("conversation_sessions")
-          .update({
-            current_state: "CONVERSATION",
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", sessionId);
-        return { error: "Failed to save memory" };
-      }
-
-      await supabase.from("memory_tags").insert(
-        tags.map((t) => ({ memory_id: memory.id, tag_id: t.id }))
-      );
-
-      // Find and create relationships to similar memories
-      let related: { id: string; similarity_score: number }[] = [];
-      try {
-        related = await findRelatedMemories(userId, memory.id, embedding);
-        console.log(
-          `[finalize_memory] Found ${related.length} related memories for memory ${memory.id}`,
-          related.map((r) => ({ id: r.id, score: r.similarity_score }))
-        );
-        await createRelationships(memory.id, related);
-        console.log(`[finalize_memory] Created relationships for memory ${memory.id}`);
-      } catch (relError) {
-        console.error(
-          `[finalize_memory] Failed to create relationships for memory ${memory.id}:`,
-          relError instanceof Error ? relError.message : relError
-        );
-        // Don't fail the whole operation if relationships fail
-      }
-      await incrementCategoryMemoryCount(userId, category.id);
-      syncMemoryToStorage(userId, memory, category, tags).catch(() => {});
-
-      // Update state to CONVERSATION after successful memory creation
-      await supabase
+      // Set saving_in_progress flag to prevent concurrent processing
+      const { error: flagError } = await supabase
         .from("conversation_sessions")
         .update({
-          current_state: "CONVERSATION",
+          memory_draft: { ...draft, saving_in_progress: true },
           updated_at: new Date().toISOString(),
         })
         .eq("id", sessionId);
 
-      return {
-        status: "memory_saved",
-        memory: {
-          id: memory.id,
-          title: memory.title,
-          content_preview: fullContent.slice(0, CONTENT_PREVIEW_LEN) + (fullContent.length > CONTENT_PREVIEW_LEN ? "..." : ""),
-          category: category.name,
-          tags: tags.map((t) => t.name),
-          related_count: related.length,
-        },
-      };
+      if (flagError) {
+        console.error("[finalize_memory] Failed to set saving flag:", flagError.message);
+        // Continue anyway - the duplicate check should prevent issues
+      }
+
+      try {
+        const embedding = await generateEmbedding(fullContent);
+        const category = await assignCategory(
+          userId,
+          categoryOverride ?? fullContent
+        );
+        const tags = tagsOverride
+          ? await getOrCreateTags(userId, tagsOverride)
+          : await extractAndAssignTags(userId, fullContent);
+
+        const { data: memory, error: memError } = await supabase
+          .from("memories")
+          .insert({
+            user_id: userId,
+            title: titleOverride ?? (draft.title as string) ?? "Untitled",
+            content: fullContent,
+            summary: (draft.summary as string) ?? null,
+            embedding,
+            category_id: category.id,
+            source_platform: context.platform,
+          })
+          .select()
+          .single();
+
+        if (memError) {
+          // Clear saving flag so user can retry
+          await supabase
+            .from("conversation_sessions")
+            .update({
+              memory_draft: { ...draft, saving_in_progress: false },
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", sessionId);
+          console.error("[finalize_memory] Failed to save memory:", memError.message);
+          return { error: "Failed to save memory. Please try again." };
+        }
+
+        await supabase.from("memory_tags").insert(
+          tags.map((t) => ({ memory_id: memory.id, tag_id: t.id }))
+        );
+
+        // Find and create relationships to similar memories
+        let related: { id: string; similarity_score: number }[] = [];
+        try {
+          related = await findRelatedMemories(userId, memory.id, embedding);
+          console.log(
+            `[finalize_memory] Found ${related.length} related memories for memory ${memory.id}`,
+            related.map((r) => ({ id: r.id, score: r.similarity_score }))
+          );
+          await createRelationships(memory.id, related);
+          console.log(`[finalize_memory] Created relationships for memory ${memory.id}`);
+        } catch (relError) {
+          console.error(
+            `[finalize_memory] Failed to create relationships for memory ${memory.id}:`,
+            relError instanceof Error ? relError.message : relError
+          );
+        }
+        await incrementCategoryMemoryCount(userId, category.id);
+        syncMemoryToStorage(userId, memory, category, tags).catch(() => {});
+
+        // Clear draft and reset state ONLY after successful save
+        await supabase
+          .from("conversation_sessions")
+          .update({
+            current_state: "CONVERSATION",
+            memory_draft: {},
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", sessionId);
+
+        return {
+          status: "memory_saved",
+          memory: {
+            id: memory.id,
+            title: memory.title,
+            content_preview: fullContent.slice(0, CONTENT_PREVIEW_LEN) + (fullContent.length > CONTENT_PREVIEW_LEN ? "..." : ""),
+            category: category.name,
+            tags: tags.map((t) => t.name),
+            related_count: related.length,
+          },
+        };
+      } catch (err) {
+        // Clear saving flag so user can retry
+        await supabase
+          .from("conversation_sessions")
+          .update({
+            memory_draft: { ...draft, saving_in_progress: false },
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", sessionId);
+        console.error("[finalize_memory] Unexpected error:", err);
+        return { error: "Failed to save memory. Please try again." };
+      }
     }
 
     case "cancel_memory_draft": {
@@ -579,6 +673,13 @@ export async function handleToolCall(
           )
         : ["email"];
 
+      console.log("[create_reminder] Called with:", { memoryId, remindAt, title, channels });
+
+      if (!memoryId) {
+        console.error("[create_reminder] Missing memory_id");
+        return { error: "Missing memory_id. Please specify which memory to set a reminder for." };
+      }
+
       // Verify memory exists
       const { data: memory, error: memError } = await supabase
         .from("memories")
@@ -589,13 +690,15 @@ export async function handleToolCall(
         .single();
 
       if (memError || !memory) {
-        return { error: "Memory not found" };
+        console.error("[create_reminder] Memory not found:", memoryId, memError?.message);
+        return { error: "Memory not found. The memory may have been deleted." };
       }
 
       // Parse the remind_at time
       const remindAtDate = new Date(remindAt);
       if (isNaN(remindAtDate.getTime())) {
-        return { error: "Invalid reminder time" };
+        console.error("[create_reminder] Invalid remind_at:", remindAt);
+        return { error: "Invalid reminder time. Please provide a valid date and time." };
       }
 
       try {
@@ -630,8 +733,8 @@ export async function handleToolCall(
           message: `Reminder set for ${formattedDate}. I'll notify you via ${channels.join(", ")}.`,
         };
       } catch (err) {
-        console.error("Failed to create reminder:", err);
-        return { error: "Failed to create reminder" };
+        console.error("[create_reminder] Failed to create reminder:", err instanceof Error ? err.message : err);
+        return { error: "Failed to create reminder. Please try again." };
       }
     }
 
