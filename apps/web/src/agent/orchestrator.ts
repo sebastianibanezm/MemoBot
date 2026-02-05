@@ -50,6 +50,7 @@ export interface RetrievedMemory {
 export interface ProcessMessageResult {
   reply: string;
   retrievedMemories: RetrievedMemory[];
+  createdMemory: RetrievedMemory | null;
 }
 
 /**
@@ -86,6 +87,9 @@ export async function processMessage(
   
   // Track retrieved memories from search_memories calls
   const retrievedMemories: RetrievedMemory[] = [];
+  
+  // Track created memory from finalize_memory calls
+  let createdMemory: RetrievedMemory | null = null;
 
   // Agentic loop: process tool calls until done
   while (assistantMessage?.tool_calls && assistantMessage.tool_calls.length > 0) {
@@ -133,6 +137,21 @@ export async function processMessage(
           }
         }
       }
+      
+      // Capture created memory from finalize_memory tool calls
+      if (toolName === "finalize_memory" && result && typeof result === "object") {
+        const finalizeResult = result as { 
+          status?: string; 
+          memory?: { id: string; title: string; content_preview: string } 
+        };
+        if (finalizeResult.status === "memory_saved" && finalizeResult.memory) {
+          createdMemory = {
+            id: finalizeResult.memory.id,
+            title: finalizeResult.memory.title,
+            content_preview: finalizeResult.memory.content_preview,
+          };
+        }
+      }
 
       // Add tool result to messages
       messages.push({
@@ -157,5 +176,6 @@ export async function processMessage(
   return {
     reply: assistantMessage?.content?.trim() ?? "I'm not sure how to respond to that.",
     retrievedMemories,
+    createdMemory,
   };
 }

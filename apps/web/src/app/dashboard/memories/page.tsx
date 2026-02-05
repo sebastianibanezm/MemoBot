@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { NEON_COLORS, type NeonColorKey } from "@/lib/constants/colors";
 
 interface Memory {
   id: string;
@@ -20,6 +21,7 @@ interface Memory {
 interface Category {
   id: string;
   name: string;
+  color: NeonColorKey;
   memory_count: number;
 }
 
@@ -143,6 +145,14 @@ export default function MemoriesPage() {
   const hasActiveFilters = debouncedSearch || selectedCategoryIds.length > 0 || selectedTagIds.length > 0;
 
   const totalPages = Math.ceil(total / limit);
+
+  // Helper to get category color for a memory
+  const getCategoryColor = useCallback((categoryId: string | null): { hex: string; glow: string } | null => {
+    if (!categoryId) return null;
+    const category = categories.find((c) => c.id === categoryId);
+    if (!category?.color) return null;
+    return NEON_COLORS[category.color] ?? NEON_COLORS["neon-cyan"];
+  }, [categories]);
 
   return (
     <div className="p-6 pb-20 max-w-5xl mx-auto">
@@ -444,11 +454,21 @@ export default function MemoriesPage() {
                     </p>
                     {/* Category and Tags */}
                     <div className="flex flex-wrap items-center gap-2 mt-2">
-                      {m.category_name && (
-                        <span className="badge text-[10px]">
-                          {m.category_name.toUpperCase()}
-                        </span>
-                      )}
+                      {m.category_name && (() => {
+                        const color = getCategoryColor(m.category_id);
+                        return (
+                          <span 
+                            className="text-[10px] px-2 py-0.5 rounded border"
+                            style={{
+                              backgroundColor: color ? `${color.hex}20` : undefined,
+                              borderColor: color ? `${color.hex}50` : undefined,
+                              color: color?.hex,
+                            }}
+                          >
+                            {m.category_name.toUpperCase()}
+                          </span>
+                        );
+                      })()}
                       {m.tags.slice(0, 3).map((tag) => (
                         <span
                           key={tag}
@@ -491,11 +511,21 @@ export default function MemoriesPage() {
                 <h2 className="font-medium text-[var(--foreground)] line-clamp-1 flex-1">
                   {m.title || "(UNTITLED)"}
                 </h2>
-                {m.category_name && (
-                  <span className="badge text-[10px] flex-shrink-0">
-                    {m.category_name.toUpperCase()}
-                  </span>
-                )}
+                {m.category_name && (() => {
+                  const color = getCategoryColor(m.category_id);
+                  return (
+                    <span 
+                      className="text-[10px] px-2 py-0.5 rounded border flex-shrink-0"
+                      style={{
+                        backgroundColor: color ? `${color.hex}20` : undefined,
+                        borderColor: color ? `${color.hex}50` : undefined,
+                        color: color?.hex,
+                      }}
+                    >
+                      {m.category_name.toUpperCase()}
+                    </span>
+                  );
+                })()}
               </div>
               <p className="text-sm text-[var(--muted)] line-clamp-2">
                 {m.summary || m.content}

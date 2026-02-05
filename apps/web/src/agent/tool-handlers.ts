@@ -18,6 +18,11 @@ import {
   RAG_SEMANTIC_DEFAULTS,
   RAG_CONTEXT_DEFAULTS,
 } from "../lib/rag-config";
+import {
+  createReminder,
+  listReminders,
+  cancelReminder,
+} from "../lib/services/reminders";
 
 function getOpenAIClient(): OpenAI {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -243,10 +248,10 @@ export async function handleToolCall(
         (categories ?? []) as { id: string; name: string; embedding?: number[] | null }[]
       );
 
-      const { data: tagsData } = await supabase.from("tags").select("name").eq("user_id", userId);
+      const { data: tagsData } = await supabase.from("tags").select("name, embedding").eq("user_id", userId);
       const tagsPreview = await previewTags(
         fullContent,
-        (tagsData ?? []) as { name: string }[],
+        (tagsData ?? []) as { name: string; embedding?: number[] | null }[],
         5
       );
 
@@ -346,6 +351,7 @@ export async function handleToolCall(
         memory: {
           id: memory.id,
           title: memory.title,
+          content_preview: fullContent.slice(0, CONTENT_PREVIEW_LEN) + (fullContent.length > CONTENT_PREVIEW_LEN ? "..." : ""),
           category: category.name,
           tags: tags.map((t) => t.name),
           related_count: related.length,
@@ -431,6 +437,183 @@ export async function handleToolCall(
         })
         .eq("id", sessionId);
       return { status: "state_updated", new_state: state };
+    }
+
+    // ========== REMINDER TOOLS ==========
+
+    case "suggest_reminder": {
+      const memoryId = String(toolInput.memory_id ?? "");
+      const suggestedTime = String(toolInput.suggested_time ?? "");
+      const reasoning = String(toolInput.reasoning ?? "");
+
+      // Verify memory exists
+      const { data: memory, error: memError } = await supabase
+        .from("memories")
+        .select("id, title")
+        .eq("user_id", userId)
+        .eq("id", memoryId)
+        .is("deleted_at", null)
+        .single();
+
+      if (memError || !memory) {
+        return { error: "Memory not found" };
+      }
+
+      // Parse the suggested time
+      const remindAt = new Date(suggestedTime);
+      if (isNaN(remindAt.getTime())) {
+        return { error: "Invalid suggested time" };
+      }
+
+      const formattedDate = remindAt.toLocaleDateString("en-US", {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+
+      return {
+        status: "reminder_suggested",
+        suggestion: {
+          memory_id: memoryId,
+          memory_title: memory.title,
+          suggested_time: suggestedTime,
+          formatted_time: formattedDate,
+          reasoning,
+        },
+        message: `I noticed this memory mentions something time-sensitive: ${reasoning}\n\nWould you like me to set a reminder for ${formattedDate}?`,
+      };
+    }
+
+    case "create_reminder": {
+      const memoryId = String(toolInput.memory_id ?? "");
+      const remindAt = String(toolInput.remind_at ?? "");
+      const title = String(toolInput.title ?? "");
+      const summary = toolInput.summary ? String(toolInput.summary) : null;
+      const channels = Array.isArray(toolInput.channels)
+        ? (toolInput.channels as string[]).filter((c) =>
+            ["whatsapp", "telegram", "email"].includes(c)
+          )
+        : ["email"];
+
+      // Verify memory exists
+      const { data: memory, error: memError } = await supabase
+        .from("memories")
+        .select("id, title")
+        .eq("user_id", userId)
+        .eq("id", memoryId)
+        .is("deleted_at", null)
+        .single();
+
+      if (memError || !memory) {
+        return { error: "Memory not found" };
+      }
+
+      // Parse the remind_at time
+      const remindAtDate = new Date(remindAt);
+      if (isNaN(remindAtDate.getTime())) {
+        return { error: "Invalid reminder time" };
+      }
+
+      try {
+        const reminder = await createReminder({
+          userId,
+          memoryId,
+          title,
+          summary,
+          remindAt: remindAtDate,
+          channels: channels as ("whatsapp" | "telegram" | "email")[],
+        });
+
+        const formattedDate = remindAtDate.toLocaleDateString("en-US", {
+          weekday: "long",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+
+        return {
+          status: "reminder_created",
+          reminder: {
+            id: reminder.id,
+            title: reminder.title,
+            remind_at: reminder.remind_at,
+            formatted_time: formattedDate,
+            channels: reminder.channels,
+            memory_title: memory.title,
+          },
+          message: `Reminder set for ${formattedDate}. I'll notify you via ${channels.join(", ")}.`,
+        };
+      } catch (err) {
+        console.error("Failed to create reminder:", err);
+        return { error: "Failed to create reminder" };
+      }
+    }
+
+    case "list_reminders": {
+      const upcomingOnly = toolInput.upcoming_only !== false;
+      const limit = Math.min(20, Math.max(1, Number(toolInput.limit) || 10));
+
+      try {
+        const reminders = await listReminders(userId, {
+          upcoming: upcomingOnly,
+          limit,
+        });
+
+        if (reminders.length === 0) {
+          return {
+            reminders: [],
+            message: upcomingOnly
+              ? "You don't have any upcoming reminders."
+              : "You don't have any reminders yet.",
+          };
+        }
+
+        return {
+          reminders: reminders.map((r) => ({
+            id: r.id,
+            title: r.title,
+            summary: r.summary,
+            remind_at: r.remind_at,
+            formatted_time: new Date(r.remind_at).toLocaleDateString("en-US", {
+              weekday: "short",
+              month: "short",
+              day: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+            status: r.status,
+            channels: r.channels,
+            memory_title: r.memory?.title ?? null,
+          })),
+        };
+      } catch (err) {
+        console.error("Failed to list reminders:", err);
+        return { error: "Failed to list reminders" };
+      }
+    }
+
+    case "cancel_reminder": {
+      const reminderId = String(toolInput.reminder_id ?? "");
+
+      try {
+        const cancelled = await cancelReminder(userId, reminderId);
+        return {
+          status: "reminder_cancelled",
+          reminder: {
+            id: cancelled.id,
+            title: cancelled.title,
+          },
+          message: `Reminder "${cancelled.title}" has been cancelled.`,
+        };
+      } catch (err) {
+        console.error("Failed to cancel reminder:", err);
+        return { error: "Reminder not found or could not be cancelled" };
+      }
     }
 
     default:

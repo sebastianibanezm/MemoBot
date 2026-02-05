@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import DateTimePicker from "@/components/DateTimePicker";
 
 interface RelatedMemory {
   id: string;
@@ -11,6 +12,15 @@ interface RelatedMemory {
   content: string;
   category_name: string | null;
   similarity_score: number;
+}
+
+interface Reminder {
+  id: string;
+  title: string;
+  summary: string | null;
+  remind_at: string;
+  channels: string[];
+  status: "pending" | "sent" | "failed" | "cancelled";
 }
 
 interface Category {
@@ -79,7 +89,18 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
   const [isLinking, setIsLinking] = useState(false);
   const [unlinkingId, setUnlinkingId] = useState<string | null>(null);
 
-  // Fetch categories and tags on mount
+  // Reminder state
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [showReminderModal, setShowReminderModal] = useState(false);
+  const [reminderTitle, setReminderTitle] = useState("");
+  const [reminderSummary, setReminderSummary] = useState("");
+  const [reminderAt, setReminderAt] = useState<Date | null>(null);
+  const [reminderChannels, setReminderChannels] = useState<string[]>(["email"]);
+  const [isCreatingReminder, setIsCreatingReminder] = useState(false);
+  const [reminderError, setReminderError] = useState("");
+  const [isAnalyzingReminder, setIsAnalyzingReminder] = useState(false);
+
+  // Fetch categories, tags, and reminders on mount
   useEffect(() => {
     fetch("/api/categories")
       .then((res) => (res.ok ? res.json() : { categories: [] }))
@@ -91,6 +112,27 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
       .then((data) => setTags(data.tags ?? []))
       .catch(() => setTags([]));
   }, []);
+
+  // Fetch reminders for this memory
+  const fetchReminders = useCallback(async () => {
+    try {
+      const res = await fetch("/api/reminders");
+      if (res.ok) {
+        const data = await res.json();
+        // Filter to only reminders for this memory
+        const memoryReminders = (data.reminders ?? []).filter(
+          (r: Reminder & { memory_id: string }) => r.memory_id === memory.id
+        );
+        setReminders(memoryReminders);
+      }
+    } catch (error) {
+      console.error("Failed to fetch reminders:", error);
+    }
+  }, [memory.id]);
+
+  useEffect(() => {
+    fetchReminders();
+  }, [fetchReminders]);
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -263,6 +305,115 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
     setIsEditing(false);
   };
 
+  const toggleReminderChannel = useCallback((channel: string) => {
+    setReminderChannels((prev) =>
+      prev.includes(channel) ? prev.filter((c) => c !== channel) : [...prev, channel]
+    );
+  }, []);
+
+  const handleCreateReminder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setReminderError("");
+
+    if (!reminderTitle.trim()) {
+      setReminderError("Please enter a title");
+      return;
+    }
+    if (!reminderAt) {
+      setReminderError("Please select a date and time");
+      return;
+    }
+    if (reminderChannels.length === 0) {
+      setReminderError("Please select at least one notification channel");
+      return;
+    }
+
+    setIsCreatingReminder(true);
+
+    try {
+      const res = await fetch("/api/reminders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          memory_id: memory.id,
+          title: reminderTitle.trim(),
+          summary: reminderSummary.trim() || null,
+          remind_at: reminderAt!.toISOString(),
+          channels: reminderChannels,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to create reminder");
+      }
+
+      // Reset form and close modal
+      setReminderTitle("");
+      setReminderSummary("");
+      setReminderAt(null);
+      setReminderChannels(["email"]);
+      setShowReminderModal(false);
+      fetchReminders();
+    } catch (err) {
+      setReminderError(err instanceof Error ? err.message : "Failed to create reminder");
+    } finally {
+      setIsCreatingReminder(false);
+    }
+  };
+
+  const handleDeleteReminder = async (reminderId: string) => {
+    try {
+      const res = await fetch(`/api/reminders/${reminderId}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        setReminders((prev) => prev.filter((r) => r.id !== reminderId));
+      }
+    } catch (error) {
+      console.error("Failed to delete reminder:", error);
+    }
+  };
+
+  const openReminderModalWithSuggestions = async () => {
+    // Reset form first
+    setReminderTitle("");
+    setReminderSummary("");
+    setReminderAt(null);
+    setReminderChannels(["email"]);
+    setReminderError("");
+    
+    // Open modal immediately
+    setShowReminderModal(true);
+    setIsAnalyzingReminder(true);
+
+    try {
+      const res = await fetch("/api/reminders/suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memory_id: memory.id }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const suggestion = data.suggestion;
+        
+        if (suggestion) {
+          setReminderTitle(suggestion.title || "");
+          setReminderSummary(suggestion.summary || "");
+          if (suggestion.suggested_time) {
+            setReminderAt(new Date(suggestion.suggested_time));
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Failed to get reminder suggestions:", error);
+      // Silently fail - user can still fill in manually
+    } finally {
+      setIsAnalyzingReminder(false);
+    }
+  };
+
   return (
     <div className="p-6 pb-20 max-w-3xl mx-auto">
       {/* Back Link */}
@@ -303,15 +454,27 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  onClick={openReminderModalWithSuggestions}
+                  className="btn-outline btn-sm flex items-center gap-1.5"
+                  title="Set a reminder for this memory"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>
+                    <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>
+                  </svg>
+                  REMIND
+                </button>
+                <button
+                  type="button"
                   onClick={() => setIsEditing(true)}
-                  className="px-3 py-1.5 text-xs font-mono tracking-wider text-[var(--accent)] border border-[var(--accent)] rounded hover:bg-[var(--accent-muted)] transition-all"
+                  className="btn-accent btn-sm"
                 >
                   EDIT
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowDeleteConfirm(true)}
-                  className="px-3 py-1.5 text-xs font-mono tracking-wider text-red-400 border border-red-400/50 rounded hover:bg-red-400/10 transition-all"
+                  className="btn-danger btn-sm"
                 >
                   DELETE
                 </button>
@@ -503,7 +666,7 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
                 type="button"
                 onClick={handleDelete}
                 disabled={isDeleting}
-                className="px-4 py-2 text-xs font-mono tracking-wider text-white bg-red-600 rounded hover:bg-red-700 disabled:opacity-50 transition-all"
+                className="btn-danger-solid btn-sm"
               >
                 {isDeleting ? "DELETING..." : "YES, DELETE"}
               </button>
@@ -511,7 +674,7 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
                 type="button"
                 onClick={() => setShowDeleteConfirm(false)}
                 disabled={isDeleting}
-                className="px-4 py-2 text-xs font-mono tracking-wider text-[var(--muted)] border border-[var(--card-border)] rounded hover:text-[var(--foreground)] transition-all"
+                className="btn-ghost btn-sm"
               >
                 CANCEL
               </button>
@@ -570,7 +733,7 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
               type="button"
               onClick={handleSave}
               disabled={isSaving || !content.trim()}
-              className="px-4 py-2 text-xs font-mono tracking-wider text-[var(--foreground)] bg-[var(--accent)] rounded hover:opacity-90 disabled:opacity-50 transition-all"
+              className="btn-accent btn-sm"
             >
               {isSaving ? "SAVING..." : "SAVE CHANGES"}
             </button>
@@ -578,7 +741,7 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
               type="button"
               onClick={handleCancel}
               disabled={isSaving}
-              className="px-4 py-2 text-xs font-mono tracking-wider text-[var(--muted)] border border-[var(--card-border)] rounded hover:text-[var(--foreground)] transition-all"
+              className="btn-ghost btn-sm"
             >
               CANCEL
             </button>
@@ -608,6 +771,97 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
         </footer>
       </article>
 
+      {/* Reminders Section */}
+      <section className="mt-8">
+        <div className="flex items-center justify-between mb-4">
+          <h2
+            className="text-lg font-display tracking-wider text-[var(--foreground)]"
+            style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
+          >
+            REMINDERS
+          </h2>
+          <button
+            type="button"
+            onClick={openReminderModalWithSuggestions}
+            className="text-xs text-[var(--accent)] hover:text-[var(--accent-light)] transition-colors"
+          >
+            + ADD REMINDER
+          </button>
+        </div>
+        {reminders.length > 0 ? (
+          <div className="space-y-2">
+            {reminders.map((reminder) => {
+              const isPast = reminder.status !== "pending" || new Date(reminder.remind_at) <= new Date();
+              return (
+                <div
+                  key={reminder.id}
+                  className={`card-dystopian p-3 flex items-center justify-between gap-4 ${isPast ? "opacity-60" : ""}`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`text-[10px] px-2 py-0.5 rounded border ${
+                        reminder.status === "pending"
+                          ? "bg-[var(--accent)]/20 text-[var(--accent)] border-[var(--accent)]/30"
+                          : reminder.status === "sent"
+                          ? "bg-green-500/20 text-green-400 border-green-500/30"
+                          : "bg-gray-500/20 text-gray-400 border-gray-500/30"
+                      }`}>
+                        {reminder.status.toUpperCase()}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        {reminder.channels.map((channel) => (
+                          <span key={channel} className="text-[var(--muted)]" title={channel}>
+                            {channel === "email" ? "📧" : channel === "whatsapp" ? "📱" : "✈️"}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <p className={`text-sm ${isPast ? "line-through text-[var(--muted)]" : "text-[var(--foreground)]"}`}>
+                      {reminder.title}
+                    </p>
+                    {reminder.summary && (
+                      <p className="text-xs text-[var(--muted)] mt-0.5 line-clamp-1">
+                        {reminder.summary}
+                      </p>
+                    )}
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-xs text-[var(--muted-light)]">
+                      {new Date(reminder.remind_at).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </p>
+                    {!isPast && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteReminder(reminder.id)}
+                        className="text-[10px] text-[var(--muted)] hover:text-red-400 mt-1"
+                      >
+                        DELETE
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="card-dystopian p-6 text-center">
+            <p className="text-sm text-[var(--muted)]">No reminders set for this memory</p>
+            <button
+              type="button"
+              onClick={openReminderModalWithSuggestions}
+              className="mt-3 text-xs text-[var(--accent)] hover:text-[var(--accent-light)] transition-colors"
+            >
+              Create your first reminder
+            </button>
+          </div>
+        )}
+      </section>
+
       {/* Related Memories Section */}
       <section className="mt-8">
         <div className="flex items-center justify-between mb-4">
@@ -620,7 +874,7 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
           <button
             type="button"
             onClick={() => setShowLinkModal(true)}
-            className="px-3 py-1.5 text-xs font-mono tracking-wider text-[var(--accent)] border border-[var(--accent)] rounded hover:bg-[var(--accent-muted)] transition-all"
+            className="btn-accent btn-sm"
           >
             + LINK MEMORY
           </button>
@@ -768,6 +1022,156 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Reminder Modal */}
+      {showReminderModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+          <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg w-full max-w-md mx-4 overflow-hidden">
+            <div className="p-4 border-b border-[var(--card-border)] flex items-center justify-between">
+              <h3
+                className="text-lg font-display tracking-wider text-[var(--foreground)]"
+                style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
+              >
+                SET REMINDER
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowReminderModal(false);
+                  setReminderTitle("");
+                  setReminderSummary("");
+                  setReminderAt(null);
+                  setReminderChannels(["email"]);
+                  setReminderError("");
+                }}
+                className="text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 6 6 18"/>
+                  <path d="m6 6 12 12"/>
+                </svg>
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateReminder} className="p-4 space-y-4">
+              {reminderError && (
+                <div className="p-3 bg-red-500/10 border border-red-500/30 rounded text-xs text-red-400">
+                  {reminderError}
+                </div>
+              )}
+
+              {/* AI Analysis Loading */}
+              {isAnalyzingReminder && (
+                <div className="p-3 bg-[var(--accent)]/10 border border-[var(--accent)]/30 rounded flex items-center gap-2">
+                  <div className="w-4 h-4 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
+                  <span className="text-xs text-[var(--accent)]">Analyzing memory for suggestions...</span>
+                </div>
+              )}
+
+              {/* Memory Info */}
+              <div className="p-3 bg-[var(--background-alt)] border border-[var(--card-border)] rounded">
+                <p className="text-[10px] text-[var(--muted)] tracking-wider mb-1">LINKED MEMORY</p>
+                <p className="text-sm text-[var(--foreground)]">{memory.title || "(Untitled)"}</p>
+              </div>
+
+              {/* Title */}
+              <div>
+                <label className="block text-xs text-[var(--muted)] mb-1.5 tracking-wider">
+                  REMINDER TITLE *
+                </label>
+                <input
+                  type="text"
+                  value={reminderTitle}
+                  onChange={(e) => setReminderTitle(e.target.value)}
+                  placeholder={isAnalyzingReminder ? "Loading suggestion..." : "e.g., Follow up on this"}
+                  disabled={isAnalyzingReminder}
+                  className="w-full px-3 py-2 bg-[var(--background)] border border-[var(--card-border)] rounded text-sm text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:border-[var(--accent)] disabled:opacity-50"
+                />
+              </div>
+
+              {/* Summary */}
+              <div>
+                <label className="block text-xs text-[var(--muted)] mb-1.5 tracking-wider">
+                  NOTES (OPTIONAL)
+                </label>
+                <textarea
+                  value={reminderSummary}
+                  onChange={(e) => setReminderSummary(e.target.value)}
+                  placeholder={isAnalyzingReminder ? "Loading suggestion..." : "Any additional notes..."}
+                  disabled={isAnalyzingReminder}
+                  rows={2}
+                  className="w-full px-3 py-2 bg-[var(--background)] border border-[var(--card-border)] rounded text-sm text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:border-[var(--accent)] resize-none disabled:opacity-50"
+                />
+              </div>
+
+              {/* Date/Time */}
+              <div>
+                <label className="block text-xs text-[var(--muted)] mb-1.5 tracking-wider">
+                  REMIND AT *
+                </label>
+                <DateTimePicker
+                  selected={reminderAt}
+                  onChange={(date) => setReminderAt(date)}
+                  minDate={new Date()}
+                  placeholder="Select date and time..."
+                />
+              </div>
+
+              {/* Channels */}
+              <div>
+                <label className="block text-xs text-[var(--muted)] mb-1.5 tracking-wider">
+                  NOTIFICATION CHANNELS *
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { id: "email", label: "Email" },
+                    { id: "whatsapp", label: "WhatsApp" },
+                    { id: "telegram", label: "Telegram" },
+                  ].map(({ id, label }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => toggleReminderChannel(id)}
+                      className={`px-3 py-1.5 text-xs rounded border transition-colors ${
+                        reminderChannels.includes(id)
+                          ? "bg-[var(--accent)] border-[var(--accent)] text-black"
+                          : "bg-[var(--background)] border-[var(--card-border)] text-[var(--muted)] hover:border-[var(--accent)]"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Submit */}
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="submit"
+                  disabled={isCreatingReminder}
+                  className="btn-accent text-xs flex-1 disabled:opacity-50"
+                >
+                  {isCreatingReminder ? "CREATING..." : "SET REMINDER"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowReminderModal(false);
+                    setReminderTitle("");
+                    setReminderSummary("");
+                    setReminderAt(null);
+                    setReminderChannels(["email"]);
+                    setReminderError("");
+                  }}
+                  className="btn-outline text-xs"
+                >
+                  CANCEL
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

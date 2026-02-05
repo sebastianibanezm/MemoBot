@@ -10,6 +10,7 @@ export const dynamic = "force-dynamic";
 const navLinks = [
   { href: "/dashboard", label: "HOME" },
   { href: "/dashboard/memories", label: "MEMORIES" },
+  { href: "/dashboard/reminders", label: "REMINDERS" },
   { href: "/dashboard/categories", label: "CATEGORIES" },
   { href: "/dashboard/tags", label: "TAGS" },
   { href: "/dashboard/graph", label: "GRAPH" },

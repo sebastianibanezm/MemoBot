@@ -6,6 +6,7 @@
 import OpenAI from "openai";
 import { createServerSupabase } from "../supabase/server";
 import { generateEmbedding } from "./embedding";
+import { NEON_COLOR_KEYS, type NeonColorKey } from "../constants/colors";
 
 function getOpenAIClient(): OpenAI {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -155,6 +156,56 @@ async function getCategoryByName(
   return data ? { id: data.id, name: data.name } : null;
 }
 
+/**
+ * Pick an available color for a new category.
+ * First tries to find a color not currently in use.
+ * If all colors are taken, picks the one with the fewest memories.
+ */
+async function pickAvailableColor(userId: string): Promise<NeonColorKey> {
+  const supabase = createServerSupabase();
+  
+  // Fetch all existing categories with their colors and memory counts
+  const { data: categories } = await supabase
+    .from("categories")
+    .select("color, memory_count")
+    .eq("user_id", userId);
+  
+  if (!categories?.length) {
+    // No categories exist, return the first color
+    return NEON_COLOR_KEYS[0];
+  }
+  
+  // Build a map of color -> total memory count
+  const colorUsage = new Map<string, number>();
+  for (const cat of categories) {
+    if (cat.color) {
+      const current = colorUsage.get(cat.color) ?? 0;
+      colorUsage.set(cat.color, current + (cat.memory_count ?? 0));
+    }
+  }
+  
+  // Find colors not currently in use
+  const unusedColors = NEON_COLOR_KEYS.filter((color) => !colorUsage.has(color));
+  
+  if (unusedColors.length > 0) {
+    // Return the first unused color
+    return unusedColors[0];
+  }
+  
+  // All colors are taken, find the one with the fewest memories
+  let minColor: NeonColorKey = NEON_COLOR_KEYS[0];
+  let minCount = Infinity;
+  
+  for (const [color, count] of colorUsage) {
+    if (count < minCount) {
+      minCount = count;
+      minColor = color as NeonColorKey;
+    }
+  }
+  
+  return minColor;
+}
+
 async function getOrCreateCategoryByName(
   userId: string,
   name: string
@@ -163,12 +214,17 @@ async function getOrCreateCategoryByName(
   if (existing) return existing;
   const supabase = createServerSupabase();
   const embedding = await generateEmbedding(name);
+  
+  // Pick an available color for the new category
+  const color = await pickAvailableColor(userId);
+  
   const { data, error } = await supabase
     .from("categories")
     .insert({
       user_id: userId,
       name: name.trim(),
       embedding,
+      color,
       memory_count: 0,
     })
     .select("id, name")
@@ -178,7 +234,7 @@ async function getOrCreateCategoryByName(
 }
 
 /**
- * Increment memory_count for a category (no RPC in schema).
+ * Increment memory_count for a category and regenerate its description.
  */
 export async function incrementCategoryMemoryCount(
   userId: string,
@@ -197,6 +253,59 @@ export async function incrementCategoryMemoryCount(
     .update({ memory_count: count, updated_at: new Date().toISOString() })
     .eq("user_id", userId)
     .eq("id", categoryId);
+  
+  // Regenerate category description to include the new memory
+  // Run in background to not block the memory creation flow
+  generateCategoryDescription(userId, categoryId).catch((err) => {
+    console.error("Failed to regenerate category description:", err);
+  });
+}
+
+/**
+ * Decrement memory_count for a category and regenerate its description.
+ */
+export async function decrementCategoryMemoryCount(
+  userId: string,
+  categoryId: string
+): Promise<void> {
+  const supabase = createServerSupabase();
+  const { data } = await supabase
+    .from("categories")
+    .select("memory_count")
+    .eq("user_id", userId)
+    .eq("id", categoryId)
+    .single();
+  const count = Math.max(0, (data?.memory_count ?? 0) - 1);
+  await supabase
+    .from("categories")
+    .update({ memory_count: count, updated_at: new Date().toISOString() })
+    .eq("user_id", userId)
+    .eq("id", categoryId);
+  
+  // Regenerate category description
+  generateCategoryDescription(userId, categoryId).catch((err) => {
+    console.error("Failed to regenerate category description:", err);
+  });
+}
+
+/**
+ * Update memory counts when a memory moves between categories.
+ * Decrements old category count and increments new category count.
+ */
+export async function updateCategoryMemoryCounts(
+  userId: string,
+  oldCategoryId: string | null,
+  newCategoryId: string | null
+): Promise<void> {
+  // Decrement old category count
+  if (oldCategoryId) {
+    await decrementCategoryMemoryCount(userId, oldCategoryId);
+  }
+  
+  // Increment new category count
+  if (newCategoryId) {
+    await incrementCategoryMemoryCount(userId, newCategoryId);
+  }
 }
 
 function cosineSimilarity(a: number[], b: number[]): number {
@@ -211,4 +320,74 @@ function cosineSimilarity(a: number[], b: number[]): number {
   }
   const denom = Math.sqrt(normA) * Math.sqrt(normB);
   return denom === 0 ? 0 : dot / denom;
+}
+
+/**
+ * Generate a category description by analyzing all memory summaries in the category.
+ * Uses GPT-4o-mini to create a brief 1-2 sentence description.
+ */
+export async function generateCategoryDescription(
+  userId: string,
+  categoryId: string
+): Promise<string> {
+  const supabase = createServerSupabase();
+  
+  // Fetch all memories in this category with their summaries
+  const { data: memories } = await supabase
+    .from("memories")
+    .select("summary, title")
+    .eq("user_id", userId)
+    .eq("category_id", categoryId)
+    .is("deleted_at", null)
+    .limit(50); // Limit to avoid token overflow
+  
+  if (!memories?.length) {
+    return "";
+  }
+  
+  // Combine summaries for analysis
+  const summaryTexts = memories
+    .map((m) => m.summary || m.title || "")
+    .filter(Boolean)
+    .slice(0, 20); // Use up to 20 summaries
+  
+  if (summaryTexts.length === 0) {
+    return "";
+  }
+  
+  const combinedContent = summaryTexts.join("\n- ");
+  
+  try {
+    const openai = getOpenAIClient();
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      max_tokens: 100,
+      messages: [
+        {
+          role: "system",
+          content: `You create brief category descriptions. Given a list of memory summaries from a category, write a concise 1-2 sentence description that captures what this category contains. Be descriptive but brief. Do not start with "This category..." - just describe the content directly.`,
+        },
+        {
+          role: "user",
+          content: `Create a brief description for a category containing these memories:\n- ${combinedContent}`,
+        },
+      ],
+    });
+    
+    const description = response.choices[0]?.message?.content?.trim() ?? "";
+    
+    // Update the category with the new description
+    if (description) {
+      await supabase
+        .from("categories")
+        .update({ description, updated_at: new Date().toISOString() })
+        .eq("user_id", userId)
+        .eq("id", categoryId);
+    }
+    
+    return description;
+  } catch (error) {
+    console.error("Failed to generate category description:", error);
+    return "";
+  }
 }

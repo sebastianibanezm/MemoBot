@@ -1,5 +1,6 @@
 /**
  * TagService: extract tags from content, normalize, get-or-create (user-scoped).
+ * Uses embedding similarity to match existing tags when exact name match fails.
  */
 
 import OpenAI from "openai";
@@ -21,6 +22,9 @@ export interface TagRow {
   usage_count: number;
 }
 
+// Similarity threshold for tag matching (slightly higher than categories since tags are more specific)
+const SIMILARITY_THRESHOLD = 0.80;
+
 function normalizeTagName(name: string): string {
   return name
     .trim()
@@ -30,8 +34,23 @@ function normalizeTagName(name: string): string {
     .slice(0, 50) || "untagged";
 }
 
+function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length !== b.length) return 0;
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i]! * b[i]!;
+    normA += a[i]! * a[i]!;
+    normB += b[i]! * b[i]!;
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom === 0 ? 0 : dot / denom;
+}
+
 /**
  * Get or create tags by name; returns tag rows for linking to memory.
+ * Uses embedding similarity to match existing tags when exact name match fails.
  */
 export async function getOrCreateTags(
   userId: string,
@@ -42,48 +61,113 @@ export async function getOrCreateTags(
   const normalized = [...new Set(tagNames.map((n) => normalizeTagName(n)).filter(Boolean))];
   const result: TagRow[] = [];
 
+  // Fetch all existing tags with embeddings upfront for similarity matching
+  const { data: allTags } = await supabase
+    .from("tags")
+    .select("id, name, normalized_name, usage_count, embedding")
+    .eq("user_id", userId);
+
+  const existingTags = allTags ?? [];
+  const tagsWithEmbeddings = existingTags.filter(
+    (t) => t.embedding && Array.isArray(t.embedding)
+  );
+
   for (const name of normalized.slice(0, 20)) {
     const norm = normalizeTagName(name);
     const displayName = name.trim().slice(0, 50) || norm;
 
-    const { data: existing } = await supabase
-      .from("tags")
-      .select("id, name, normalized_name, usage_count")
-      .eq("user_id", userId)
-      .eq("normalized_name", norm)
-      .maybeSingle();
+    // Step 1: Try exact normalized name match first (fast path)
+    const exactMatch = existingTags.find((t) => t.normalized_name === norm);
 
-    if (existing) {
+    if (exactMatch) {
       await supabase
         .from("tags")
         .update({
-          usage_count: (existing.usage_count ?? 0) + 1,
+          usage_count: (exactMatch.usage_count ?? 0) + 1,
           name: displayName,
         })
-        .eq("id", existing.id);
+        .eq("id", exactMatch.id);
       result.push({
-        id: existing.id,
+        id: exactMatch.id,
         name: displayName,
-        normalized_name: existing.normalized_name,
-        usage_count: (existing.usage_count ?? 0) + 1,
+        normalized_name: exactMatch.normalized_name,
+        usage_count: (exactMatch.usage_count ?? 0) + 1,
       });
       continue;
     }
 
-    const embedding = await generateEmbedding(displayName);
+    // Step 2: No exact match - try embedding similarity matching
+    const tagEmbedding = await generateEmbedding(displayName);
+
+    let bestMatch: {
+      id: string;
+      name: string;
+      normalized_name: string;
+      usage_count: number;
+      similarity: number;
+    } | null = null;
+
+    for (const tag of tagsWithEmbeddings) {
+      const sim = cosineSimilarity(tagEmbedding, tag.embedding as number[]);
+      if (sim >= SIMILARITY_THRESHOLD && (!bestMatch || sim > bestMatch.similarity)) {
+        bestMatch = {
+          id: tag.id,
+          name: tag.name,
+          normalized_name: tag.normalized_name,
+          usage_count: tag.usage_count ?? 0,
+          similarity: sim,
+        };
+      }
+    }
+
+    if (bestMatch) {
+      // Found a similar tag via embedding - use it instead of creating a new one
+      await supabase
+        .from("tags")
+        .update({
+          usage_count: bestMatch.usage_count + 1,
+        })
+        .eq("id", bestMatch.id);
+      result.push({
+        id: bestMatch.id,
+        name: bestMatch.name, // Keep the original tag name
+        normalized_name: bestMatch.normalized_name,
+        usage_count: bestMatch.usage_count + 1,
+      });
+      continue;
+    }
+
+    // Step 3: No match found - create new tag
     const { data: created, error } = await supabase
       .from("tags")
       .insert({
         user_id: userId,
         name: displayName,
         normalized_name: norm,
-        embedding,
+        embedding: tagEmbedding,
         usage_count: 1,
       })
       .select("id, name, normalized_name, usage_count")
       .single();
 
     if (error) throw new Error(`Failed to create tag: ${error.message}`);
+    
+    // Add the newly created tag to our local cache for subsequent iterations
+    existingTags.push({
+      id: created.id,
+      name: created.name,
+      normalized_name: created.normalized_name,
+      usage_count: created.usage_count ?? 1,
+      embedding: tagEmbedding,
+    });
+    tagsWithEmbeddings.push({
+      id: created.id,
+      name: created.name,
+      normalized_name: created.normalized_name,
+      usage_count: created.usage_count ?? 1,
+      embedding: tagEmbedding,
+    });
+
     result.push({
       id: created.id,
       name: created.name,
@@ -148,12 +232,57 @@ export async function extractAndAssignTags(
 }
 
 /**
- * Preview which tags would be extracted (for draft display).
+ * Preview which tags would be assigned (for draft display).
+ * Uses embedding similarity to show accurate preview of matched existing tags.
  */
 export async function previewTags(
   content: string,
-  _existingTags: { name: string }[],
+  existingTags: { name: string; embedding?: number[] | null }[],
   maxTags = 5
 ): Promise<string[]> {
-  return extractTagNamesFromContent(content, maxTags);
+  const extractedNames = await extractTagNamesFromContent(content, maxTags);
+  if (!extractedNames.length) return ["general"];
+
+  const tagsWithEmbeddings = existingTags.filter(
+    (t) => t.embedding && Array.isArray(t.embedding) && t.embedding.length === 512
+  );
+
+  // If no existing tags with embeddings, just return extracted names
+  if (tagsWithEmbeddings.length === 0) {
+    return extractedNames;
+  }
+
+  const result: string[] = [];
+
+  for (const name of extractedNames) {
+    const norm = normalizeTagName(name);
+
+    // Check for exact match first
+    const exactMatch = existingTags.find(
+      (t) => normalizeTagName(t.name) === norm
+    );
+    if (exactMatch) {
+      result.push(exactMatch.name);
+      continue;
+    }
+
+    // Check for embedding similarity match
+    const tagEmbedding = await generateEmbedding(name);
+    let bestMatch: { name: string; similarity: number } | null = null;
+
+    for (const tag of tagsWithEmbeddings) {
+      const sim = cosineSimilarity(tagEmbedding, tag.embedding!);
+      if (sim >= SIMILARITY_THRESHOLD && (!bestMatch || sim > bestMatch.similarity)) {
+        bestMatch = { name: tag.name, similarity: sim };
+      }
+    }
+
+    if (bestMatch) {
+      result.push(bestMatch.name);
+    } else {
+      result.push(name); // New tag would be created
+    }
+  }
+
+  return result;
 }

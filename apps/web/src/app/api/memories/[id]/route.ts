@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { getMemoryById, updateMemory, deleteMemory } from "@/lib/services/memory";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { updateCategoryMemoryCounts } from "@/lib/services/categorizer";
 
 /**
  * GET /api/memories/[id] — single memory with category name and tag names.
@@ -99,6 +100,9 @@ export async function PUT(
     }
 
     const supabase = createServerSupabase();
+    
+    // Track old category for description regeneration
+    const oldCategoryId = existing.category_id;
 
     // Update memory fields
     const updated = await updateMemory(userId, id, {
@@ -107,6 +111,15 @@ export async function PUT(
       summary: summary !== undefined ? summary : undefined,
       categoryId: category_id !== undefined ? category_id : undefined,
     });
+    
+    // Update category memory counts if category changed
+    if (category_id !== undefined && category_id !== oldCategoryId) {
+      // This will decrement old category count, increment new category count,
+      // and regenerate descriptions for both categories
+      updateCategoryMemoryCounts(userId, oldCategoryId, category_id).catch((err) => {
+        console.error("Failed to update category memory counts:", err);
+      });
+    }
 
     // Handle tag updates if tag_ids is provided
     if (tag_ids !== undefined && Array.isArray(tag_ids)) {

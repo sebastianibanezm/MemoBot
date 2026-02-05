@@ -42,7 +42,7 @@ export async function POST(request: Request) {
     }>;
 
     // Process the message through the agent orchestrator
-    const { reply, retrievedMemories } = await processMessage(message, {
+    const { reply, retrievedMemories, createdMemory } = await processMessage(message, {
       userId,
       sessionId,
       platform,
@@ -58,6 +58,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ 
       reply,
       memories: retrievedMemories.length > 0 ? retrievedMemories : undefined,
+      createdMemory: createdMemory || undefined,
     });
   } catch (e) {
     console.error("[POST /api/chat]", e);

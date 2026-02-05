@@ -14,6 +14,7 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   memories?: RetrievedMemory[];
+  createdMemory?: RetrievedMemory;
 }
 
 const INITIAL_GREETING = "How can I help you today?";
@@ -156,6 +157,38 @@ function MemoryCards({ memories }: { memories: RetrievedMemory[] }) {
   );
 }
 
+// Created memory card shown after memory is saved
+function CreatedMemoryCard({ memory }: { memory: RetrievedMemory }) {
+  return (
+    <div className="flex justify-start mb-2">
+      <div className="max-w-[90%]">
+        <div className="text-xs text-[var(--muted)] mb-2 font-mono">
+          <span className="text-[var(--accent)]">//</span> Memory saved:
+        </div>
+        <Link
+          href={`/dashboard/memories/${memory.id}`}
+          className="group block"
+        >
+          <div className="bg-[var(--accent)]/10 border border-[var(--accent)]/30 hover:border-[var(--accent)]/60 rounded-md px-4 py-3 transition-all cursor-pointer max-w-[280px]">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[var(--accent)] text-sm">&#10003;</span>
+              <div className="text-sm font-medium text-[var(--foreground)] truncate group-hover:text-[var(--accent)] transition-colors">
+                {memory.title || "Untitled"}
+              </div>
+            </div>
+            <div className="text-xs text-[var(--muted)] line-clamp-2">
+              {memory.content_preview}
+            </div>
+            <div className="text-xs text-[var(--accent)] mt-2 opacity-70 group-hover:opacity-100 transition-opacity">
+              Click to view memory →
+            </div>
+          </div>
+        </Link>
+      </div>
+    </div>
+  );
+}
+
 export default function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -170,15 +203,19 @@ export default function ChatInterface() {
   const [currentMode, setCurrentMode] = useState<"recall" | "create">("recall");
   const [isInCreateSession, setIsInCreateSession] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const phaseTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Get the appropriate status phases based on current mode
   const STATUS_PHASES = currentMode === "create" ? CREATE_STATUS_PHASES : RECALL_STATUS_PHASES;
 
   // Auto-scroll to bottom of messages container when messages change or loading state changes
+  // Uses scrollTop instead of scrollIntoView to avoid affecting page scroll
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = messagesContainerRef.current;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
   }, [messages, isLoading]);
 
   // Focus input on mount
@@ -249,6 +286,7 @@ export default function ChatInterface() {
         role: "assistant",
         content: data.reply || "I'm not sure how to respond to that.",
         memories: data.memories,
+        createdMemory: data.createdMemory,
       };
       setMessages((prev) => [...prev, assistantMessage]);
 
@@ -292,7 +330,7 @@ export default function ChatInterface() {
         </div>
 
         {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
           {messages.map((message) => (
             <div key={message.id}>
               {/* Show memory cards before assistant message */}
@@ -321,6 +359,12 @@ export default function ChatInterface() {
                   </p>
                 </div>
               </div>
+              {/* Show created memory card after the assistant's save confirmation */}
+              {message.role === "assistant" && message.createdMemory && (
+                <div className="mt-3">
+                  <CreatedMemoryCard memory={message.createdMemory} />
+                </div>
+              )}
             </div>
           ))}
 
@@ -330,9 +374,6 @@ export default function ChatInterface() {
               statusMessage={STATUS_PHASES[statusPhase].message} 
             />
           )}
-
-          {/* Scroll anchor */}
-          <div ref={messagesEndRef} />
         </div>
 
         {/* Input Area */}
@@ -354,7 +395,7 @@ export default function ChatInterface() {
             <button
               type="submit"
               disabled={!input.trim() || isLoading}
-              className="px-4 py-2 text-xs font-mono tracking-wider text-[var(--accent)] border border-[var(--accent)] rounded hover:bg-[var(--accent-muted)] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              className="btn-accent btn-sm"
             >
               SEND
             </button>

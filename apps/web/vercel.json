@@ -16,5 +16,11 @@
       "source": "/api/webhook/:path*",
       "destination": "/api/webhook/:path*"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/reminders",
+      "schedule": "*/5 * * * *"
+    }
   ]
 }

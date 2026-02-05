@@ -14,14 +14,33 @@ export async function GET() {
 
   try {
     const supabase = createServerSupabase();
+    
+    // Fetch memories with category_id, summary, and created_at
     const { data: memories, error: memErr } = await supabase
       .from("memories")
-      .select("id, title")
+      .select("id, title, summary, created_at, category_id")
       .eq("user_id", userId)
       .is("deleted_at", null);
 
     if (memErr) throw memErr;
     const memoryIds = new Set((memories ?? []).map((m) => m.id));
+
+    // Fetch categories to get colors
+    const categoryIds = [...new Set((memories ?? []).map((m) => m.category_id).filter(Boolean))];
+    let categoryColorMap: Record<string, string> = {};
+    
+    if (categoryIds.length > 0) {
+      const { data: categories, error: catErr } = await supabase
+        .from("categories")
+        .select("id, color")
+        .in("id", categoryIds);
+      
+      if (!catErr && categories) {
+        categoryColorMap = Object.fromEntries(
+          categories.map((c) => [c.id, c.color || "neon-cyan"])
+        );
+      }
+    }
 
     const { data: rels, error: relErr } = await supabase
       .from("memory_relationships")
@@ -36,6 +55,9 @@ export async function GET() {
     const nodes = (memories ?? []).map((m) => ({
       id: m.id,
       title: m.title || "(Untitled)",
+      summary: m.summary,
+      createdAt: m.created_at,
+      categoryColor: m.category_id ? categoryColorMap[m.category_id] : null,
     }));
 
     return NextResponse.json({

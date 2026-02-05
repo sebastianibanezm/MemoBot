@@ -220,4 +220,93 @@ export const MEMOBOT_TOOLS: MemoBotTool[] = [
       required: ["state"],
     },
   },
+  // ========== REMINDERS ==========
+  {
+    name: "suggest_reminder",
+    description:
+      "Suggest a reminder for a memory that contains time-sensitive information such as appointments, deadlines, follow-ups, or events. Call this after saving a memory that mentions future dates or time-sensitive content. This presents the suggestion to the user for confirmation.",
+    input_schema: {
+      type: "object",
+      properties: {
+        memory_id: {
+          type: "string",
+          description: "UUID of the memory to set a reminder for",
+        },
+        suggested_time: {
+          type: "string",
+          description: "ISO 8601 datetime for when the reminder should be sent",
+        },
+        reasoning: {
+          type: "string",
+          description: "Brief explanation of why this reminder is suggested (e.g., 'Meeting with John tomorrow at 3pm')",
+        },
+      },
+      required: ["memory_id", "suggested_time", "reasoning"],
+    },
+  },
+  {
+    name: "create_reminder",
+    description:
+      "Create a reminder for a memory. Call this after the user confirms they want to set a reminder. The reminder will be sent at the specified time via the user's preferred notification channels.",
+    input_schema: {
+      type: "object",
+      properties: {
+        memory_id: {
+          type: "string",
+          description: "UUID of the memory to set a reminder for",
+        },
+        remind_at: {
+          type: "string",
+          description: "ISO 8601 datetime for when the reminder should be sent",
+        },
+        title: {
+          type: "string",
+          description: "Short title for the reminder",
+        },
+        summary: {
+          type: "string",
+          description: "Brief summary or reasoning for the reminder",
+        },
+        channels: {
+          type: "array",
+          items: { type: "string", enum: ["whatsapp", "telegram", "email"] },
+          description: "Notification channels to use. Defaults to ['email'] if not specified.",
+        },
+      },
+      required: ["memory_id", "remind_at", "title"],
+    },
+  },
+  {
+    name: "list_reminders",
+    description:
+      "List the user's reminders. Use when user asks about their upcoming reminders or reminder history.",
+    input_schema: {
+      type: "object",
+      properties: {
+        upcoming_only: {
+          type: "boolean",
+          description: "If true, only show pending reminders scheduled for the future. Default: true",
+        },
+        limit: {
+          type: "number",
+          description: "Number of reminders to return (default: 10, max: 20)",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "cancel_reminder",
+    description: "Cancel a pending reminder. Use when user wants to remove an upcoming reminder.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reminder_id: {
+          type: "string",
+          description: "UUID of the reminder to cancel",
+        },
+      },
+      required: ["reminder_id"],
+    },
+  },
 ];
