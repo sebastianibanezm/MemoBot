@@ -886,15 +886,13 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
         <footer className="mt-8 pt-4 border-t border-[var(--card-border)]">
           <div className="flex flex-wrap gap-6 text-xs text-[var(--muted)]">
             <div>
+              <span className="text-[var(--accent)] tracking-wider">RELEVANT DATE:</span>{" "}
+              {new Date(memory.occurred_at ?? memory.created_at).toLocaleString()}
+            </div>
+            <div>
               <span className="text-[var(--accent)] tracking-wider">CREATED:</span>{" "}
               {new Date(memory.created_at).toLocaleString()}
             </div>
-            {memory.occurred_at && (
-              <div>
-                <span className="text-[var(--accent)] tracking-wider">OCCURRED:</span>{" "}
-                {new Date(memory.occurred_at).toLocaleString()}
-              </div>
-            )}
             {memory.source_platform && (
               <div>
                 <span className="text-[var(--accent)] tracking-wider">SOURCE:</span>{" "}

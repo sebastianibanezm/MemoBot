@@ -127,6 +127,12 @@ ONLY after finalize_memory returns successfully with status "memory_saved", chec
 - Before finalize_memory is called
 - If finalize_memory returns an error or any status other than "memory_saved"
 - If finalize_memory returns "saving_in_progress", "error", or any failure message
+- If finalize_memory returns relevant_date_info.is_in_past = true (the memory's date is in the past)
+  - Examples of past-date memories that should NOT get reminders:
+    - "Yesterday I spoke to John about my car"
+    - "Last week I went to the dentist"
+    - "Two days ago I finished the project"
+  - The "Create Reminder" button will NOT appear for these memories
 
 **If memory creation fails:**
 - Apologize for the error
@@ -136,7 +142,9 @@ ONLY after finalize_memory returns successfully with status "memory_saved", chec
 ### How to Handle Reminders
 1. Call finalize_memory FIRST and wait for it to return successfully
 2. When finalize_memory returns, SAVE the memory.id value - you will need it for the reminder
-3. If the content mentions dates/times, mention that the user can tap 'Create Reminder' if they want a reminder
+3. Check relevant_date_info.is_in_past in the response:
+   - If is_in_past = true → Do NOT suggest a reminder (the memory is about something that already happened)
+   - If is_in_past = false → Mention that the user can tap 'Create Reminder' if they want a reminder
 4. **When user confirms** (taps "Create Reminder" button, says "yes", "sure", "ok", etc.):
    - The "Create Reminder" button sends "Yes, create a reminder for this memory" - treat this as confirmation
    - Call create_reminder using the SAME memory_id from the finalize_memory response

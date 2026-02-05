@@ -23,6 +23,7 @@ import {
   listReminders,
   cancelReminder,
 } from "../lib/services/reminders";
+import { extractRelevantDate } from "../lib/services/date-extraction";
 
 function getOpenAIClient(): OpenAI {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -473,16 +474,28 @@ export async function handleToolCall(
           ? await getOrCreateTags(userId, tagsOverride)
           : await extractAndAssignTags(userId, generatedFullContent);
 
+        // Extract relevant date from content
+        const memoryTitle = titleOverride ?? generatedTitle ?? "Untitled";
+        const dateInfo = await extractRelevantDate(generatedFullContent, memoryTitle);
+        const occurredAt = dateInfo.date ?? new Date().toISOString();
+        console.log("[finalize_memory] Extracted date:", {
+          date: dateInfo.date,
+          is_in_past: dateInfo.is_in_past,
+          confidence: dateInfo.confidence,
+          reasoning: dateInfo.reasoning,
+        });
+
         const { data: memory, error: memError } = await supabase
           .from("memories")
           .insert({
             user_id: userId,
-            title: titleOverride ?? generatedTitle ?? "Untitled",
+            title: memoryTitle,
             content: generatedFullContent,
             summary: generatedSummary ?? null,
             embedding,
             category_id: category.id,
             source_platform: context.platform,
+            occurred_at: occurredAt,
           })
           .select()
           .single();
@@ -534,6 +547,14 @@ export async function handleToolCall(
           })
           .eq("id", sessionId);
 
+        // Only show "Create Reminder" button if the relevant date is in the future
+        const suggestedButtons = dateInfo.is_in_past
+          ? [{ id: "new_memory", title: "New Memory" }]
+          : [
+              { id: "create_reminder", title: "Create Reminder" },
+              { id: "new_memory", title: "New Memory" },
+            ];
+
         return {
           status: "memory_saved",
           memory: {
@@ -544,10 +565,13 @@ export async function handleToolCall(
             tags: tags.map((t) => t.name),
             related_count: related.length,
           },
-          suggested_buttons: [
-            { id: "create_reminder", title: "Create Reminder" },
-            { id: "new_memory", title: "New Memory" },
-          ],
+          relevant_date_info: {
+            date: occurredAt,
+            is_in_past: dateInfo.is_in_past,
+            has_explicit_date: dateInfo.date !== null,
+            confidence: dateInfo.confidence,
+          },
+          suggested_buttons: suggestedButtons,
         };
       } catch (err) {
         // Clear saving flag so user can retry
