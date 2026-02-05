@@ -16,6 +16,7 @@ interface Memory {
   created_at: string;
   updated_at: string;
   occurred_at: string | null;
+  has_reminders?: boolean;
 }
 
 interface Category {
@@ -380,16 +381,23 @@ export default function MemoriesPage() {
             )}
             {selectedCategoryIds.map((categoryId) => {
               const category = categories.find((c) => c.id === categoryId);
-              return category ? (
+              if (!category) return null;
+              const color = getCategoryColor(categoryId);
+              return (
                 <span
                   key={categoryId}
-                  className="text-[10px] px-2 py-1 rounded bg-[var(--accent)]/20 text-[var(--accent)] border border-[var(--accent)]/30 flex items-center gap-1"
+                  className="text-[10px] px-2 py-1 rounded border flex items-center gap-1"
+                  style={{
+                    backgroundColor: color ? `${color.hex}20` : undefined,
+                    borderColor: color ? `${color.hex}50` : undefined,
+                    color: color?.hex,
+                  }}
                 >
                   {category.name.toUpperCase()}
                   <button
                     type="button"
                     onClick={() => toggleCategory(categoryId)}
-                    className="hover:text-[var(--foreground)]"
+                    className="hover:opacity-70"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M18 6 6 18"/>
@@ -397,7 +405,7 @@ export default function MemoriesPage() {
                     </svg>
                   </button>
                 </span>
-              ) : null;
+              );
             })}
             {selectedTagIds.map((tagId) => {
               const tag = tags.find((t) => t.id === tagId);
@@ -446,9 +454,19 @@ export default function MemoriesPage() {
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
-                    <h2 className="font-medium text-[var(--foreground)] truncate">
-                      {m.title || "(UNTITLED)"}
-                    </h2>
+                    <div className="flex items-center gap-2">
+                      <h2 className="font-medium text-[var(--foreground)] truncate">
+                        {m.title || "(UNTITLED)"}
+                      </h2>
+                      {m.has_reminders && (
+                        <span className="flex-shrink-0 text-[var(--accent)]" title="Has active reminder">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>
+                            <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>
+                          </svg>
+                        </span>
+                      )}
+                    </div>
                     <p className="text-sm text-[var(--muted)] mt-1 line-clamp-2">
                       {m.summary || m.content}
                     </p>
@@ -508,9 +526,19 @@ export default function MemoriesPage() {
               className="card-dystopian glitch-hover block p-4"
             >
               <div className="flex items-start justify-between gap-2 mb-2">
-                <h2 className="font-medium text-[var(--foreground)] line-clamp-1 flex-1">
-                  {m.title || "(UNTITLED)"}
-                </h2>
+                <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                  <h2 className="font-medium text-[var(--foreground)] line-clamp-1">
+                    {m.title || "(UNTITLED)"}
+                  </h2>
+                  {m.has_reminders && (
+                    <span className="flex-shrink-0 text-[var(--accent)]" title="Has active reminder">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>
+                        <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>
+                      </svg>
+                    </span>
+                  )}
+                </div>
                 {m.category_name && (() => {
                   const color = getCategoryColor(m.category_id);
                   return (

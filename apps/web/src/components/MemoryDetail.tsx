@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import DateTimePicker from "@/components/DateTimePicker";
+import { NEON_COLORS, type NeonColorKey } from "@/lib/constants/colors";
 
 interface RelatedMemory {
   id: string;
@@ -12,6 +13,7 @@ interface RelatedMemory {
   content: string;
   category_name: string | null;
   similarity_score: number;
+  has_reminders?: boolean;
 }
 
 interface Reminder {
@@ -26,6 +28,7 @@ interface Reminder {
 interface Category {
   id: string;
   name: string;
+  color: NeonColorKey;
   memory_count: number;
 }
 
@@ -88,6 +91,7 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
   const [isSearching, setIsSearching] = useState(false);
   const [isLinking, setIsLinking] = useState(false);
   const [unlinkingId, setUnlinkingId] = useState<string | null>(null);
+  const [isRecomputingRelations, setIsRecomputingRelations] = useState(false);
 
   // Reminder state
   const [reminders, setReminders] = useState<Reminder[]>([]);
@@ -153,6 +157,18 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
       prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]
     );
   }, []);
+
+  // Helper to get category color by ID or name
+  const getCategoryColor = useCallback((categoryId: string | null, categoryName: string | null): { hex: string; glow: string } | null => {
+    let category: Category | undefined;
+    if (categoryId) {
+      category = categories.find((c) => c.id === categoryId);
+    } else if (categoryName) {
+      category = categories.find((c) => c.name.toLowerCase() === categoryName.toLowerCase());
+    }
+    if (!category?.color) return null;
+    return NEON_COLORS[category.color] ?? NEON_COLORS["neon-cyan"];
+  }, [categories]);
 
   const selectCategory = useCallback((categoryId: string | null) => {
     setSelectedCategoryId(categoryId);
@@ -244,6 +260,32 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
       alert("Failed to unlink memory. Please try again.");
     } finally {
       setUnlinkingId(null);
+    }
+  };
+
+  const handleRecomputeRelations = async () => {
+    setIsRecomputingRelations(true);
+    try {
+      const response = await fetch(
+        `/api/memories/${memory.id}/recompute-relations`,
+        { method: "POST" }
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to find related memories");
+      }
+
+      const data = await response.json();
+      if (data.relatedCount > 0) {
+        router.refresh();
+      } else {
+        alert("No similar memories found above the similarity threshold.");
+      }
+    } catch (error) {
+      console.error("Failed to recompute relations:", error);
+      alert("Failed to find related memories. Please try again.");
+    } finally {
+      setIsRecomputingRelations(false);
     }
   };
 
@@ -485,9 +527,21 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
           {/* Metadata - View Mode */}
           {!isEditing && (
             <div className="flex flex-wrap gap-2 text-xs mt-3">
-              {memory.category_name && (
-                <span className="badge">{memory.category_name.toUpperCase()}</span>
-              )}
+              {memory.category_name && (() => {
+                const color = getCategoryColor(memory.category_id, memory.category_name);
+                return (
+                  <span 
+                    className="text-[10px] px-2 py-0.5 rounded border"
+                    style={{
+                      backgroundColor: color ? `${color.hex}20` : undefined,
+                      borderColor: color ? `${color.hex}50` : undefined,
+                      color: color?.hex,
+                    }}
+                  >
+                    {memory.category_name.toUpperCase()}
+                  </span>
+                );
+              })()}
               {memory.tag_names.map((t) => (
                 <span key={t} className="badge-muted">
                   #{t.toUpperCase()}
@@ -871,13 +925,39 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
           >
             RELATED MEMORIES
           </h2>
-          <button
-            type="button"
-            onClick={() => setShowLinkModal(true)}
-            className="btn-accent btn-sm"
-          >
-            + LINK MEMORY
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={handleRecomputeRelations}
+              disabled={isRecomputingRelations}
+              className="btn-outline btn-sm flex items-center gap-1.5"
+              title="Find similar memories automatically"
+            >
+              {isRecomputingRelations ? (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                  </svg>
+                  FINDING...
+                </>
+              ) : (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="11" cy="11" r="8"/>
+                    <path d="m21 21-4.35-4.35"/>
+                  </svg>
+                  FIND RELATED
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowLinkModal(true)}
+              className="btn-accent btn-sm"
+            >
+              + LINK MEMORY
+            </button>
+          </div>
         </div>
 
         {relatedMemories.length > 0 ? (
@@ -889,9 +969,19 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
                   className="block"
                 >
                   <div className="flex items-start justify-between gap-2 mb-2">
-                    <h3 className="font-medium text-[var(--foreground)] line-clamp-1 flex-1">
-                      {related.title || "(UNTITLED)"}
-                    </h3>
+                    <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                      <h3 className="font-medium text-[var(--foreground)] line-clamp-1">
+                        {related.title || "(UNTITLED)"}
+                      </h3>
+                      {related.has_reminders && (
+                        <span className="flex-shrink-0 text-[var(--accent)]" title="Has active reminder">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>
+                            <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>
+                          </svg>
+                        </span>
+                      )}
+                    </div>
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent)]/20 text-[var(--accent)] border border-[var(--accent)]/30 flex-shrink-0">
                       {Math.round(related.similarity_score * 100)}%
                     </span>
@@ -899,13 +989,23 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
                   <p className="text-sm text-[var(--muted)] line-clamp-2">
                     {related.summary || related.content}
                   </p>
-                  {related.category_name && (
-                    <div className="mt-2">
-                      <span className="badge text-[10px]">
-                        {related.category_name.toUpperCase()}
-                      </span>
-                    </div>
-                  )}
+                  {related.category_name && (() => {
+                    const color = getCategoryColor(null, related.category_name);
+                    return (
+                      <div className="mt-2">
+                        <span 
+                          className="text-[10px] px-2 py-0.5 rounded border"
+                          style={{
+                            backgroundColor: color ? `${color.hex}20` : undefined,
+                            borderColor: color ? `${color.hex}50` : undefined,
+                            color: color?.hex,
+                          }}
+                        >
+                          {related.category_name.toUpperCase()}
+                        </span>
+                      </div>
+                    );
+                  })()}
                 </Link>
                 {/* Unlink Button */}
                 <button
@@ -933,7 +1033,7 @@ export default function MemoryDetail({ memory, relatedMemories = [] }: MemoryDet
           <div className="card-dystopian p-6 text-center">
             <p className="text-sm text-[var(--muted)]">No related memories</p>
             <p className="text-xs text-[var(--muted-light)] mt-1">
-              Use the &quot;Link Memory&quot; button above to manually connect related memories
+              Use &quot;Find Related&quot; to discover similar memories, or &quot;Link Memory&quot; to manually connect them
             </p>
           </div>
         )}

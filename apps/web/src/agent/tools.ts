@@ -224,7 +224,7 @@ export const MEMOBOT_TOOLS: MemoBotTool[] = [
   {
     name: "suggest_reminder",
     description:
-      "Suggest a reminder for a memory that contains time-sensitive information such as appointments, deadlines, follow-ups, or events. Call this after saving a memory that mentions future dates or time-sensitive content. This presents the suggestion to the user for confirmation.",
+      "Suggest a reminder for a memory that contains time-sensitive information. IMPORTANT: ONLY call this AFTER finalize_memory has returned successfully with a saved memory_id. NEVER call during memory capture or before the memory is saved. This presents the suggestion to the user for confirmation.",
     input_schema: {
       type: "object",
       properties: {

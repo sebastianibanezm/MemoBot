@@ -15,10 +15,10 @@ export async function GET() {
   try {
     const supabase = createServerSupabase();
     
-    // Fetch memories with category_id, summary, and created_at
+    // Fetch memories with category_id, summary, created_at, and reminders
     const { data: memories, error: memErr } = await supabase
       .from("memories")
-      .select("id, title, summary, created_at, category_id")
+      .select("id, title, summary, created_at, category_id, reminders(id, status)")
       .eq("user_id", userId)
       .is("deleted_at", null);
 
@@ -52,13 +52,18 @@ export async function GET() {
       (r) => memoryIds.has(r.memory_a_id) && memoryIds.has(r.memory_b_id)
     );
 
-    const nodes = (memories ?? []).map((m) => ({
-      id: m.id,
-      title: m.title || "(Untitled)",
-      summary: m.summary,
-      createdAt: m.created_at,
-      categoryColor: m.category_id ? categoryColorMap[m.category_id] : null,
-    }));
+    const nodes = (memories ?? []).map((m) => {
+      const reminders = (m.reminders ?? []) as { id: string; status: string }[];
+      const hasActiveReminders = reminders.some((r) => r.status === "pending");
+      return {
+        id: m.id,
+        title: m.title || "(Untitled)",
+        summary: m.summary,
+        createdAt: m.created_at,
+        categoryColor: m.category_id ? categoryColorMap[m.category_id] : null,
+        hasReminders: hasActiveReminders,
+      };
+    });
 
     return NextResponse.json({
       nodes,

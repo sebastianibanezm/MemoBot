@@ -59,7 +59,7 @@ export async function GET(request: Request) {
     let q = supabase
       .from("memories")
       .select(
-        "id, title, content, summary, category_id, source_platform, created_at, updated_at, occurred_at, category:categories(name), memory_tags(tag:tags(name))",
+        "id, title, content, summary, category_id, source_platform, created_at, updated_at, occurred_at, category:categories(name), memory_tags(tag:tags(name)), reminders(id, status)",
         { count: "exact" }
       )
       .eq("user_id", userId)
@@ -79,7 +79,7 @@ export async function GET(request: Request) {
     const { data: memories, error, count } = await q;
     if (error) throw error;
 
-    // Transform to include category_name and tags array
+    // Transform to include category_name, tags array, and has_reminders
     const transformed = (memories ?? []).map((m) => {
       const cat = m.category as { name: string } | { name: string }[] | null;
       const categoryName = Array.isArray(cat) ? cat[0]?.name : cat?.name;
@@ -90,6 +90,8 @@ export async function GET(request: Request) {
           return Array.isArray(t) ? t[0]?.name : t?.name;
         })
         .filter(Boolean) as string[];
+      const reminders = (m.reminders ?? []) as { id: string; status: string }[];
+      const hasActiveReminders = reminders.some((r) => r.status === "pending");
       return {
         id: m.id,
         title: m.title,
@@ -102,6 +104,7 @@ export async function GET(request: Request) {
         created_at: m.created_at,
         updated_at: m.updated_at,
         occurred_at: m.occurred_at,
+        has_reminders: hasActiveReminders,
       };
     });
 
