@@ -10,12 +10,18 @@ interface RetrievedMemory {
   attachment_count?: number;
 }
 
+interface SuggestedButton {
+  id: string;
+  title: string;
+}
+
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   memories?: RetrievedMemory[];
   createdMemory?: RetrievedMemory;
+  suggestedButtons?: SuggestedButton[];
 }
 
 interface PendingAttachment {
@@ -200,12 +206,43 @@ function CreatedMemoryCard({ memory }: { memory: RetrievedMemory }) {
   );
 }
 
+// Quick action buttons shown after assistant messages
+function ActionButtons({ 
+  buttons, 
+  onButtonClick, 
+  disabled 
+}: { 
+  buttons: SuggestedButton[]; 
+  onButtonClick: (button: SuggestedButton) => void;
+  disabled: boolean;
+}) {
+  if (buttons.length === 0) return null;
+
+  return (
+    <div className="flex justify-start mt-2">
+      <div className="flex flex-wrap gap-2">
+        {buttons.map((button) => (
+          <button
+            key={button.id}
+            onClick={() => onButtonClick(button)}
+            disabled={disabled}
+            className="px-3 py-1.5 text-xs font-mono rounded-md border border-[var(--accent)]/40 bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20 hover:border-[var(--accent)]/60 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {button.title}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "greeting",
       role: "assistant",
       content: INITIAL_GREETING,
+      suggestedButtons: [{ id: "new_memory", title: "New Memory" }],
     },
   ]);
   const [input, setInput] = useState("");
@@ -215,6 +252,9 @@ export default function ChatInterface() {
   const [isInCreateSession, setIsInCreateSession] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [latestButtons, setLatestButtons] = useState<SuggestedButton[]>([
+    { id: "new_memory", title: "New Memory" },
+  ]);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -253,13 +293,10 @@ export default function ChatInterface() {
     };
   }, [isLoading, statusPhase]);
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    const trimmedInput = input.trim();
-    if (!trimmedInput || isLoading) return;
-
+  // Core function to send a message (used by form submit and button clicks)
+  const sendMessage = async (messageText: string, attachmentIds: string[] = []) => {
     // Detect intent and set mode
-    const intent = detectIntent(trimmedInput);
+    const intent = detectIntent(messageText);
     
     // If we're in an active create session, stay in create mode
     // Otherwise, determine based on the message
@@ -276,29 +313,20 @@ export default function ChatInterface() {
     const userMessage: Message = {
       id: `user-${Date.now()}`,
       role: "user",
-      content: trimmedInput,
+      content: messageText,
     };
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setStatusPhase(0); // Reset to first phase
     setIsLoading(true);
-
-    // Get ready attachments and clear them
-    const readyAttachments = pendingAttachments.filter((a) => a.status === "ready");
-    const attachmentIds = readyAttachments.map((a) => a.id);
-    
-    // Clear pending attachments and revoke preview URLs
-    pendingAttachments.forEach((att) => {
-      if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
-    });
-    setPendingAttachments([]);
+    setLatestButtons([]); // Clear buttons while loading
 
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-          message: trimmedInput,
+          message: messageText,
           attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         }),
       });
@@ -314,8 +342,16 @@ export default function ChatInterface() {
         content: data.reply || "I'm not sure how to respond to that.",
         memories: data.memories,
         createdMemory: data.createdMemory,
+        suggestedButtons: data.suggestedButtons,
       };
       setMessages((prev) => [...prev, assistantMessage]);
+
+      // Update latest buttons for display
+      if (data.suggestedButtons && data.suggestedButtons.length > 0) {
+        setLatestButtons(data.suggestedButtons);
+      } else {
+        setLatestButtons([{ id: "new_memory", title: "New Memory" }]);
+      }
 
       // Check if the memory creation is complete (memory was saved)
       // or if user cancelled - exit create session
@@ -338,10 +374,51 @@ export default function ChatInterface() {
         content: "Sorry, something went wrong. Please try again.",
       };
       setMessages((prev) => [...prev, errorMessage]);
+      setLatestButtons([{ id: "new_memory", title: "New Memory" }]);
     } finally {
       setIsLoading(false);
       inputRef.current?.focus();
     }
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    const trimmedInput = input.trim();
+    if (!trimmedInput || isLoading) return;
+
+    // Get ready attachments and clear them
+    const readyAttachments = pendingAttachments.filter((a) => a.status === "ready");
+    const attachmentIds = readyAttachments.map((a) => a.id);
+    
+    // Clear pending attachments and revoke preview URLs
+    pendingAttachments.forEach((att) => {
+      if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
+    });
+    setPendingAttachments([]);
+
+    await sendMessage(trimmedInput, attachmentIds);
+  };
+
+  // Handle button clicks - convert button ID to the appropriate message
+  const handleButtonClick = async (button: SuggestedButton) => {
+    if (isLoading) return;
+
+    let messageText: string;
+    switch (button.id) {
+      case "new_memory":
+        messageText = "I want to create a new memory";
+        break;
+      case "save_memory":
+        messageText = "Save it";
+        break;
+      case "create_reminder":
+        messageText = "Yes, create a reminder for this memory";
+        break;
+      default:
+        messageText = button.title;
+    }
+
+    await sendMessage(messageText);
   };
 
   // Handle file selection from input
@@ -505,42 +582,55 @@ export default function ChatInterface() {
 
         {/* Messages Area */}
         <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-          {messages.map((message) => (
-            <div key={message.id}>
-              {/* Show memory cards before assistant message */}
-              {message.role === "assistant" && message.memories && message.memories.length > 0 && (
-                <MemoryCards memories={message.memories} />
-              )}
-              <div
-                className={`flex ${
-                  message.role === "user" ? "justify-end" : "justify-start"
-                }`}
-              >
+          {messages.map((message, index) => {
+            const isLastMessage = index === messages.length - 1;
+            const isLastAssistant = message.role === "assistant" && isLastMessage;
+            
+            return (
+              <div key={message.id}>
+                {/* Show memory cards before assistant message */}
+                {message.role === "assistant" && message.memories && message.memories.length > 0 && (
+                  <MemoryCards memories={message.memories} />
+                )}
                 <div
-                  className={`max-w-[80%] px-4 py-3 rounded-lg ${
-                    message.role === "user"
-                      ? "bg-[var(--accent)]/20 border border-[var(--accent)]/40 text-[var(--foreground)]"
-                      : "bg-[var(--card)] border border-[var(--card-border)] text-[var(--foreground)]"
+                  className={`flex ${
+                    message.role === "user" ? "justify-end" : "justify-start"
                   }`}
                 >
-                  {message.role === "assistant" && (
-                    <div className="text-xs text-[var(--accent)] mb-1 font-mono">
-                      MemoBot
-                    </div>
-                  )}
-                  <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                    {message.content}
-                  </p>
+                  <div
+                    className={`max-w-[80%] px-4 py-3 rounded-lg ${
+                      message.role === "user"
+                        ? "bg-[var(--accent)]/20 border border-[var(--accent)]/40 text-[var(--foreground)]"
+                        : "bg-[var(--card)] border border-[var(--card-border)] text-[var(--foreground)]"
+                    }`}
+                  >
+                    {message.role === "assistant" && (
+                      <div className="text-xs text-[var(--accent)] mb-1 font-mono">
+                        MemoBot
+                      </div>
+                    )}
+                    <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                      {message.content}
+                    </p>
+                  </div>
                 </div>
+                {/* Show created memory card after the assistant's save confirmation */}
+                {message.role === "assistant" && message.createdMemory && (
+                  <div className="mt-3">
+                    <CreatedMemoryCard memory={message.createdMemory} />
+                  </div>
+                )}
+                {/* Show action buttons after the last assistant message */}
+                {isLastAssistant && !isLoading && latestButtons.length > 0 && (
+                  <ActionButtons 
+                    buttons={latestButtons} 
+                    onButtonClick={handleButtonClick}
+                    disabled={isLoading}
+                  />
+                )}
               </div>
-              {/* Show created memory card after the assistant's save confirmation */}
-              {message.role === "assistant" && message.createdMemory && (
-                <div className="mt-3">
-                  <CreatedMemoryCard memory={message.createdMemory} />
-                </div>
-              )}
-            </div>
-          ))}
+            );
+          })}
 
           {/* Loading Indicator with Status */}
           {isLoading && (

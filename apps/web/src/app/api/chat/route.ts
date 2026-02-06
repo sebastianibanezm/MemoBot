@@ -59,7 +59,7 @@ async function handlePost(request: NextRequest) {
     }
 
     // Process the message through the agent orchestrator
-    const { reply, retrievedMemories, createdMemory } = await processMessage(message, {
+    const { reply, retrievedMemories, createdMemory, suggestedButtons } = await processMessage(message, {
       userId,
       sessionId,
       platform,
@@ -77,6 +77,7 @@ async function handlePost(request: NextRequest) {
       reply,
       memories: retrievedMemories.length > 0 ? retrievedMemories : undefined,
       createdMemory: createdMemory || undefined,
+      suggestedButtons: suggestedButtons && suggestedButtons.length > 0 ? suggestedButtons : undefined,
     });
   } catch (e) {
     console.error("[POST /api/chat]", e);
