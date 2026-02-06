@@ -7,6 +7,7 @@
 import { verifyAndLinkAccount, resolveUserFromPlatform } from "./services/account-linking";
 import { getOrCreateSession, updateSessionHistory } from "./services/session";
 import { processMessage } from "@/agent/orchestrator";
+import { createServerSupabase } from "./supabase/server";
 import type { Platform } from "./services/account-linking";
 import type { AttachmentRow } from "./services/attachment";
 
@@ -33,6 +34,7 @@ export interface AttachmentInfo {
  * 
  * @param buttonId - Optional button ID if user clicked an interactive button (WhatsApp only)
  * @param attachment - Optional attachment uploaded with the message
+ * @param isForwarded - Optional flag indicating if the message was forwarded
  */
 export async function processIncomingMessage(
   platform: Platform,
@@ -40,7 +42,8 @@ export async function processIncomingMessage(
   text: string,
   replyFn: ReplyFn,
   buttonId?: string,
-  attachment?: AttachmentRow
+  attachment?: AttachmentRow,
+  isForwarded?: boolean
 ): Promise<void> {
   const trimmedText = text.trim();
 
@@ -72,6 +75,17 @@ export async function processIncomingMessage(
     return;
   }
 
+  // Reset daily digest ignore counter when user sends any message
+  // (fire-and-forget, don't block message processing)
+  const supabaseForDigest = createServerSupabase();
+  supabaseForDigest
+    .from("user_settings")
+    .update({ daily_digest_consecutive_ignores: 0 })
+    .eq("user_id", userId)
+    .then(({ error }) => {
+      if (error) console.error("[message-router] Failed to reset digest ignores:", error.message);
+    });
+
   const { sessionId, session } = await getOrCreateSession(
     userId,
     platform,
@@ -99,6 +113,7 @@ export async function processIncomingMessage(
     messageHistory,
     buttonId,  // Pass button ID to orchestrator
     attachment: attachmentInfo,  // Pass attachment info to orchestrator
+    isForwarded: isForwarded ?? false,  // Pass forwarded flag to orchestrator
   });
 
   await updateSessionHistory(sessionId, [

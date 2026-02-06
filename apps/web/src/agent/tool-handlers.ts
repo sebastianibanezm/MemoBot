@@ -231,7 +231,42 @@ export async function handleToolCall(
 
     case "start_memory_capture": {
       const initialContent = toolInput.initial_content ? String(toolInput.initial_content) : undefined;
-      console.log("[start_memory_capture] Starting capture with initial content:", initialContent?.slice(0, 100));
+      const quickSave = Boolean(toolInput.quick_save);
+      console.log("[start_memory_capture] Starting capture with initial content:", initialContent?.slice(0, 100), "quickSave:", quickSave);
+      
+      // Quick save path: skip enrichment, go straight to MEMORY_DRAFT
+      if (quickSave && initialContent) {
+        const draftData: Record<string, unknown> = {
+          content_parts: [initialContent],
+          started_at: new Date().toISOString(),
+          enrichment_count: 0,
+          quick_save: true,
+        };
+
+        if (context.attachmentId) {
+          draftData.attachment_id = context.attachmentId;
+        }
+
+        const { error: updateError } = await supabase
+          .from("conversation_sessions")
+          .update({
+            current_state: "MEMORY_DRAFT",
+            memory_draft: draftData,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", sessionId);
+
+        if (updateError) {
+          console.error("[start_memory_capture] Quick save session update failed:", updateError.message);
+          return { error: "Failed to start quick save" };
+        }
+
+        console.log("[start_memory_capture] Quick save mode for session:", sessionId);
+        return {
+          status: "quick_save_started",
+          message: "Quick saving this memory...",
+        };
+      }
       
       // Store attachment ID in draft so it persists across messages
       const draftData: Record<string, unknown> = {
@@ -908,6 +943,56 @@ export async function handleToolCall(
         console.error("Failed to cancel reminder:", err);
         return { error: "Reminder not found or could not be cancelled" };
       }
+    }
+
+    // ========== DAILY DIGEST TOOLS ==========
+
+    case "set_digest_preference": {
+      const enabled = Boolean(toolInput.enabled);
+      const time = toolInput.time ? String(toolInput.time) : "20:00";
+      
+      // Check if user_settings row exists
+      const { data: existing } = await supabase
+        .from("user_settings")
+        .select("id")
+        .eq("user_id", userId)
+        .single();
+      
+      if (existing) {
+        const { error } = await supabase
+          .from("user_settings")
+          .update({
+            daily_digest_enabled: enabled,
+            daily_digest_time: time,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("user_id", userId);
+        
+        if (error) {
+          console.error("[set_digest_preference] Failed to update:", error.message);
+          return { error: "Failed to update digest preference" };
+        }
+      } else {
+        const { error } = await supabase
+          .from("user_settings")
+          .insert({
+            user_id: userId,
+            daily_digest_enabled: enabled,
+            daily_digest_time: time,
+          });
+        
+        if (error) {
+          console.error("[set_digest_preference] Failed to create:", error.message);
+          return { error: "Failed to update digest preference" };
+        }
+      }
+      
+      return {
+        status: enabled ? "digest_enabled" : "digest_disabled",
+        message: enabled
+          ? `Daily memory prompt enabled! I'll message you at ${time} every day.`
+          : "Daily memory prompt disabled. You can re-enable it anytime.",
+      };
     }
 
     default:

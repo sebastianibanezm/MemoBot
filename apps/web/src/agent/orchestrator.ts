@@ -103,6 +103,7 @@ export interface ConversationContext {
   messageHistory: Array<{ role: "user" | "assistant"; content: string }>;
   buttonId?: string;  // Button ID if user clicked an interactive button (WhatsApp only)
   attachment?: AttachmentInfo;  // Attachment info if user sent a file
+  isForwarded?: boolean;  // True if message was forwarded (Telegram/WhatsApp)
 }
 
 export interface RetrievedMemory {
@@ -131,7 +132,70 @@ export async function processMessage(
   userMessage: string,
   context: ConversationContext
 ): Promise<ProcessMessageResult> {
-  const { userId, sessionId, platform, messageHistory, buttonId, attachment } = context;
+  const { userId, sessionId, platform, messageHistory, buttonId, attachment, isForwarded } = context;
+
+  // === FORWARDED MESSAGE HANDLING (bypass LLM for instant save) ===
+  if (isForwarded && userMessage.trim().length > 0) {
+    console.log("[orchestrator] Forwarded message detected, using quick save");
+    
+    const supabase = createServerSupabase();
+    
+    // Set session to MEMORY_DRAFT with quick_save flag
+    await supabase
+      .from("conversation_sessions")
+      .update({
+        current_state: "MEMORY_DRAFT",
+        memory_draft: {
+          content_parts: [userMessage],
+          started_at: new Date().toISOString(),
+          enrichment_count: 0,
+          quick_save: true,
+          forwarded: true,
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", sessionId);
+
+    // Directly call the tool handlers to generate draft + finalize
+    const toolContext = { userId, sessionId, platform, attachmentId: attachment?.id };
+    
+    const draftResult = await handleToolCall("generate_memory_draft", { request_confirmation: false }, toolContext);
+    
+    if (draftResult && typeof draftResult === "object" && "error" in draftResult) {
+      return {
+        reply: "I couldn't save that forwarded message. Please try again.",
+        retrievedMemories: [],
+        createdMemory: null,
+        suggestedButtons: [{ id: "new_memory", title: "New Memory" }],
+      };
+    }
+    
+    const finalizeResult = await handleToolCall("finalize_memory", {}, toolContext) as {
+      status?: string;
+      memory?: { id: string; title: string; category?: string; tags?: string[] };
+    };
+    
+    if (finalizeResult?.status === "memory_saved" && finalizeResult.memory) {
+      const memory = finalizeResult.memory;
+      return {
+        reply: `📌 Saved forwarded message!\n\n*${memory.title}*\nCategory: ${memory.category || "General"}\nTags: ${memory.tags?.join(", ") || "none"}`,
+        retrievedMemories: [],
+        createdMemory: {
+          id: memory.id,
+          title: memory.title,
+          content_preview: userMessage.slice(0, 200),
+        },
+        suggestedButtons: [{ id: "new_memory", title: "New Memory" }],
+      };
+    }
+    
+    return {
+      reply: "I saved your forwarded message! ✅",
+      retrievedMemories: [],
+      createdMemory: null,
+      suggestedButtons: [{ id: "new_memory", title: "New Memory" }],
+    };
+  }
 
   // === QUICK RESPONSE PATTERNS (bypass LLM for common messages) ===
   // Only apply for messages without attachments or button clicks

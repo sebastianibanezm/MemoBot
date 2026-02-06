@@ -328,6 +328,12 @@ interface TelegramUpdate {
       file_size?: number;
     };
     caption?: string;
+    // Forwarded message fields
+    forward_origin?: unknown;
+    forward_from?: { id: number; first_name?: string; username?: string };
+    forward_from_chat?: { id: number; title?: string; type?: string };
+    forward_date?: number;
+    forward_sender_name?: string;
   };
   callback_query?: {
     id: string;
@@ -415,6 +421,22 @@ export async function POST(request: NextRequest) {
   const replyFn = async (replyText: string, options?: { buttons?: TelegramButton[] }) => {
     await sendTelegramMessage(chatId, replyText, options?.buttons);
   };
+
+  // Detect forwarded messages
+  let isForwarded = false;
+  if (message.forward_origin || message.forward_from || message.forward_from_chat || message.forward_date) {
+    isForwarded = true;
+    // Extract forwarding source for logging
+    let forwardedFrom = "unknown";
+    if (message.forward_from) {
+      forwardedFrom = message.forward_from.first_name || message.forward_from.username || "someone";
+    } else if (message.forward_from_chat) {
+      forwardedFrom = message.forward_from_chat.title || "a chat";
+    } else if (message.forward_sender_name) {
+      forwardedFrom = message.forward_sender_name;
+    }
+    console.log(`[Telegram] Forwarded message detected from: ${forwardedFrom}`);
+  }
 
   let text = "";
   let attachment: AttachmentRow | undefined;
@@ -648,7 +670,7 @@ export async function POST(request: NextRequest) {
   const sessionKey = `telegram:${fromId}`;
   await processWithSessionQueue(sessionKey, async () => {
     try {
-      await processIncomingMessage("telegram", fromId, text, replyFn, undefined, attachment);
+      await processIncomingMessage("telegram", fromId, text, replyFn, undefined, attachment, isForwarded);
     } catch (err) {
       console.error("Telegram webhook processIncomingMessage error:", err);
       try {

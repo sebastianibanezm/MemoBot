@@ -102,6 +102,10 @@ export const MEMOBOT_TOOLS: MemoBotTool[] = [
           type: "string",
           description: "Optional initial content if user already provided some",
         },
+        quick_save: {
+          type: "boolean",
+          description: "If true, skip enrichment and save immediately. Use when content is short (<20 words) and contains concrete facts (dates, names, numbers, URLs, locations).",
+        },
       },
       required: [],
     },
@@ -302,6 +306,25 @@ export const MEMOBOT_TOOLS: MemoBotTool[] = [
         },
       },
       required: ["reminder_id"],
+    },
+  },
+  // ========== DAILY DIGEST ==========
+  {
+    name: "set_digest_preference",
+    description: "Enable or disable the daily memory digest prompt for the user. Use when user asks to turn on/off nightly memory prompts, daily reminders to save memories, or similar.",
+    input_schema: {
+      type: "object",
+      properties: {
+        enabled: {
+          type: "boolean",
+          description: "Whether to enable (true) or disable (false) the daily digest",
+        },
+        time: {
+          type: "string",
+          description: "Optional preferred time in HH:MM 24h format (default: 20:00)",
+        },
+      },
+      required: ["enabled"],
     },
   },
 ];

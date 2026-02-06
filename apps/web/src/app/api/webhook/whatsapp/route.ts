@@ -251,6 +251,10 @@ interface WhatsAppWebhookPayload {
             mime_type?: string; // e.g., "video/mp4"
             caption?: string;   // Optional caption from user
           };
+          context?: {
+            forwarded?: boolean;            // True if message was forwarded
+            frequently_forwarded?: boolean; // True if forwarded many times (viral)
+          };
         }>;
       };
       field?: string;
@@ -385,6 +389,13 @@ export async function POST(request: NextRequest) {
           }
         };
         
+        // Detect forwarded messages
+        let isForwarded = false;
+        if (msg.context?.forwarded || msg.context?.frequently_forwarded) {
+          isForwarded = true;
+          console.log(`[WhatsApp] Forwarded message detected from ${from}`);
+        }
+
         // Extract message content from text, button click, voice note, or media attachments
         let text = "";
         let buttonId: string | undefined;
@@ -579,7 +590,7 @@ export async function POST(request: NextRequest) {
         const sessionKey = `whatsapp:${from}`;
         await processWithSessionQueue(sessionKey, async () => {
           try {
-            await processIncomingMessage("whatsapp", from, text, replyFn, buttonId, attachment);
+            await processIncomingMessage("whatsapp", from, text, replyFn, buttonId, attachment, isForwarded);
           } catch (err) {
             console.error("WhatsApp webhook processIncomingMessage error:", err);
             try {
