@@ -18,6 +18,7 @@
     "@supabase/supabase-js": "^2.94.0",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.36.2",
+    "@vercel/analytics": "^1.6.1",
     "framer-motion": "^12.33.0",
     "gifuct-js": "^2.1.2",
     "lru-cache": "^11.2.5",

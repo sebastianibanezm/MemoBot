@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
+import { Analytics } from "@vercel/analytics/react";
 import { IBM_Plex_Mono, Bebas_Neue, Orbitron } from "next/font/google";
 import "./globals.css";
 
@@ -80,6 +81,7 @@ export default function RootLayout({
           className={`${ibmPlexMono.variable} ${bebasNeue.variable} ${orbitron.variable} antialiased`}
         >
           {children}
+          <Analytics />
         </body>
       </html>
     </ClerkProvider>
