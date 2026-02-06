@@ -44,42 +44,59 @@ export default async function DashboardLayout({
   return (
     <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
       {/* Navigation Header */}
-      <header className="border-b border-[var(--card-border)] bg-[var(--background-alt)] px-4 py-3 flex items-center justify-between gap-4">
-        {/* Logo/Brand */}
-        <Link 
-          href="/dashboard" 
-          className="flex items-center gap-2 hover:opacity-80 transition-opacity"
-        >
-          <Image
-            src="/images/MemoBot_logo.png"
-            alt="MemoBot"
-            width={32}
-            height={32}
-            className="rounded"
-          />
-          <span 
-            className="text-lg font-display tracking-widest text-[var(--foreground)]"
-            style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
+      <header className="border-b border-[var(--card-border)] bg-[var(--background-alt)] px-3 sm:px-4 py-2 sm:py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
+        {/* Top row on mobile: Logo + User Button */}
+        <div className="flex items-center justify-between sm:justify-start sm:flex-shrink-0">
+          {/* Logo/Brand */}
+          <Link 
+            href="/dashboard" 
+            className="flex items-center gap-2 hover:opacity-80 transition-opacity"
           >
-            MEMOBOT
-          </span>
-        </Link>
+            <Image
+              src="/images/MemoBot_logo.png"
+              alt="MemoBot"
+              width={32}
+              height={32}
+              className="rounded w-7 h-7 sm:w-8 sm:h-8"
+            />
+            <span 
+              className="text-base sm:text-lg font-display tracking-widest text-[var(--foreground)]"
+              style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
+            >
+              MEMOBOT
+            </span>
+          </Link>
 
-        {/* Navigation Links */}
-        <nav className="flex items-center gap-1 flex-wrap">
+          {/* User Button - visible on mobile in top row */}
+          <div className="flex items-center gap-2 sm:hidden">
+            <SubscriptionBadge />
+            <UserButton
+              afterSignOutUrl="/"
+              appearance={{
+                elements: { 
+                  avatarBox: "ring-2 ring-[var(--accent)]/30 hover:ring-[var(--accent)]/60 transition-all",
+                  userButtonPopoverCard: "bg-[var(--card)] border border-[var(--card-border)]",
+                },
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Navigation Links - horizontal scroll on mobile */}
+        <nav className="flex items-center gap-1 overflow-x-auto scrollbar-hide -mx-3 px-3 sm:mx-0 sm:px-0 sm:flex-wrap">
           {navLinks.map(({ href, label }) => (
             <Link
               key={href}
               href={href}
-              className="px-3 py-1.5 text-xs font-medium tracking-wider text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--accent-muted)] rounded transition-all"
+              className="px-2 sm:px-3 py-1.5 text-xs font-medium tracking-wider text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--accent-muted)] rounded transition-all whitespace-nowrap flex-shrink-0"
             >
               {label}
             </Link>
           ))}
         </nav>
 
-        {/* User Button */}
-        <div className="flex items-center gap-3">
+        {/* User Button - hidden on mobile, visible on desktop */}
+        <div className="hidden sm:flex items-center gap-3 flex-shrink-0">
           <SubscriptionBadge />
           <span className="text-xs text-[var(--muted)] tracking-wider hidden sm:block">
             <span className="text-[var(--accent)]">//</span> CONNECTED

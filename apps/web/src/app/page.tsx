@@ -23,36 +23,36 @@ export default function HomePage() {
       />
 
       {/* Navigation Header */}
-      <header className="fixed top-0 left-0 right-0 z-50 px-6 py-2 flex items-center justify-between bg-transparent">
-        <div className="flex items-center gap-3">
+      <header className="fixed top-0 left-0 right-0 z-50 px-4 sm:px-6 py-2 flex items-center justify-between bg-transparent">
+        <div className="flex items-center gap-2 sm:gap-3">
           <Image
             src="/images/MemoBot_logo.png"
             alt="MemoBot Logo"
             width={32}
             height={32}
-            className="rounded"
+            className="rounded w-7 h-7 sm:w-8 sm:h-8"
           />
           <span 
-            className="text-xl font-display tracking-widest text-[var(--foreground)]"
+            className="text-lg sm:text-xl font-display tracking-widest text-[var(--foreground)]"
             style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
           >
             MEMOBOT
           </span>
         </div>
-        <nav className="flex items-center gap-4">
+        <nav className="flex items-center gap-2 sm:gap-4">
           <SignedOut>
             <Link 
               href="/sign-in" 
-              className="glitch-hover text-xs text-[var(--muted)] hover:text-[var(--foreground)] transition-colors tracking-wider"
+              className="glitch-hover text-xs text-[var(--muted)] hover:text-[var(--foreground)] transition-colors tracking-wider hidden sm:block"
             >
               SIGN IN
             </Link>
-            <Link href="/sign-up" className="btn-accent text-xs py-1.5 px-3">
+            <Link href="/sign-up" className="btn-accent text-xs py-1.5 px-2 sm:px-3 whitespace-nowrap">
               GET STARTED
             </Link>
           </SignedOut>
           <SignedIn>
-            <Link href="/dashboard" className="btn-accent text-xs py-1.5 px-3">
+            <Link href="/dashboard" className="btn-accent text-xs py-1.5 px-2 sm:px-3 whitespace-nowrap">
               DASHBOARD
             </Link>
           </SignedIn>
