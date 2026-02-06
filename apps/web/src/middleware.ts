@@ -10,6 +10,7 @@ const isPublicRoute = createRouteMatcher([
   "/api/health",
   "/api/webhook(.*)",      // Includes /api/webhooks/stripe
   "/api/auth/(.*)/callback",
+  "/_next/image(.*)",      // Next.js image optimization proxy
 ]);
 
 // Routes that need CORS (API routes except webhooks which have their own CORS in vercel.json)
@@ -83,7 +84,7 @@ export default clerkMiddleware(async (auth, request: NextRequest) => {
 
 export const config = {
   matcher: [
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ico|woff2?|map)).*)",
+    "/((?!_next/|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ico|woff2?|map)).*)",
     "/(api|trpc)(.*)",
   ],
 };
