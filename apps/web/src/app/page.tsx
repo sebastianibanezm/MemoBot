@@ -68,25 +68,25 @@ export default function HomePage() {
             className="text-2xl md:text-3xl font-display tracking-wide text-[var(--foreground)] mb-4 leading-tight"
             style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
           >
-            YOUR BRILLIANT IDEAS ARE SLIPPING AWAY.{" "}
-            <span className="text-[var(--accent)]">STOP THE LEAK.</span>
+            CAPTURE ANY THOUGHT IN 5 SECONDS.{" "}
+            <span className="text-[var(--accent)]">AI DOES THE REST.</span>
           </h1>
 
           {/* Subheadline */}
           <p className="text-[var(--muted)] max-w-xl mb-6 leading-relaxed text-sm md:text-base">
-            Just text your thoughts to WhatsApp or Telegram. MemoBot captures, enriches, and connects them automatically — so you never lose another insight.
+            Text an idea to WhatsApp or Telegram. MemoBot enriches it with context, organizes it automatically, and connects it to everything you&apos;ve saved — so nothing gets lost.
           </p>
 
           {/* Trust indicator */}
           <div className="terminal-text text-[var(--muted-light)] text-xs mb-6 tracking-wider">
-            <span className="text-[var(--accent)]">&gt;</span> TRUSTED BY 500+ EARLY ADOPTERS
+            <span className="text-[var(--accent)]">&gt;</span> FREE FOREVER PLAN &middot; NO CREDIT CARD REQUIRED
           </div>
 
           {/* Auth buttons */}
           <SignedOut>
             <div className="flex flex-col sm:flex-row gap-4">
               <Link href="/sign-up" className="btn-accent text-base py-3 px-8">
-                START FREE TRIAL
+                START FREE — NO SIGNUP HASSLE
               </Link>
               <a href="#how-it-works" className="btn-outline text-base py-3 px-8">
                 SEE HOW IT WORKS
@@ -97,7 +97,7 @@ export default function HomePage() {
           <SignedIn>
             <div>
               <Link href="/dashboard" className="btn-accent text-base py-3 px-8">
-                ENTER MEMORY VAULT
+                GO TO DASHBOARD
               </Link>
             </div>
           </SignedIn>
@@ -111,32 +111,32 @@ export default function HomePage() {
             className="text-3xl md:text-4xl font-display tracking-widest text-[var(--foreground)] text-center mb-12"
             style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
           >
-            SOUND FAMILIAR?
+            YOU ALREADY KNOW THIS FEELING
           </h2>
 
           <div className="grid gap-6 md:grid-cols-3 mb-12">
             <div className="card-dystopian glitch-hover p-6 text-center">
               <p className="text-[var(--muted)] text-sm leading-relaxed">
-                You had a brilliant idea in the shower. By the time you found a notes app, <span className="text-[var(--foreground)]">it was gone.</span>
+                A great idea hits you mid-conversation. You tell yourself you&apos;ll write it down later. <span className="text-[var(--foreground)]">You won&apos;t.</span>
               </p>
             </div>
 
             <div className="card-dystopian glitch-hover p-6 text-center">
               <p className="text-[var(--muted)] text-sm leading-relaxed">
-                Your notes are scattered across 5 apps, 3 devices, and a stack of paper. <span className="text-[var(--foreground)]">Good luck finding anything.</span>
+                Notes in Apple Notes. Voice memos in WhatsApp. Screenshots in your camera roll. Bookmarks in Chrome. <span className="text-[var(--foreground)]">Good luck piecing that together.</span>
               </p>
             </div>
 
             <div className="card-dystopian glitch-hover p-6 text-center">
               <p className="text-[var(--muted)] text-sm leading-relaxed">
-                You wrote something important 6 months ago. You know it exists. <span className="text-[var(--foreground)]">But you&apos;ll never find it.</span>
+                You saved something important three months ago. You know it&apos;s somewhere. <span className="text-[var(--foreground)]">&quot;Somewhere&quot; isn&apos;t good enough.</span>
               </p>
             </div>
           </div>
 
           <div className="card-dystopian p-6 max-w-2xl mx-auto">
             <p className="text-center text-[var(--accent)] text-base md:text-lg leading-relaxed">
-              Every forgotten idea is a missed opportunity. Every buried note is wasted potential. Your thoughts deserve better than digital chaos.
+              The average person loses 3–4 valuable ideas per week to friction and forgetting. MemoBot exists to make that number zero.
             </p>
           </div>
         </div>
@@ -149,37 +149,37 @@ export default function HomePage() {
             className="text-3xl md:text-4xl font-display tracking-widest text-[var(--foreground)] text-center mb-4"
             style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
           >
-            THE MEMOBOT DIFFERENCE
+            THREE STEPS. ZERO EFFORT.
           </h2>
           <p className="text-center text-[var(--muted)] mb-12 max-w-2xl mx-auto text-base md:text-lg">
-            What if capturing a memory was as easy as texting a friend?
+            What if saving a thought was as easy as texting a friend? It is now.
           </p>
 
           <div className="grid gap-6 md:grid-cols-3">
             {/* Step 1 */}
             <div className="card-dystopian glitch-hover p-6">
               <div className="text-[var(--accent)] font-mono text-sm mb-3">//01</div>
-              <h3 className="text-xl font-semibold text-[var(--foreground)] mb-2">TEXT</h3>
+              <h3 className="text-xl font-semibold text-[var(--foreground)] mb-2">TEXT IT</h3>
               <p className="text-[var(--muted)] text-sm leading-relaxed">
-                Message your thought to WhatsApp or Telegram. No app to open. No friction. Just talk.
+                Open WhatsApp or Telegram — apps you already use every day. Type a thought, snap a photo, or forward a link. That&apos;s it.
               </p>
             </div>
 
             {/* Step 2 */}
             <div className="card-dystopian glitch-hover p-6">
               <div className="text-[var(--accent)] font-mono text-sm mb-3">//02</div>
-              <h3 className="text-xl font-semibold text-[var(--foreground)] mb-2">ENRICH</h3>
+              <h3 className="text-xl font-semibold text-[var(--foreground)] mb-2">AI ENRICHES IT</h3>
               <p className="text-[var(--muted)] text-sm leading-relaxed">
-                Our AI asks the right questions to capture context you&apos;d forget. Why it matters. How you felt. What sparked it.
+                MemoBot asks smart follow-up questions — why it matters, when it happened, what sparked it — capturing context you&apos;d normally forget within minutes.
               </p>
             </div>
 
             {/* Step 3 */}
             <div className="card-dystopian glitch-hover p-6">
               <div className="text-[var(--accent)] font-mono text-sm mb-3">//03</div>
-              <h3 className="text-xl font-semibold text-[var(--foreground)] mb-2">DISCOVER</h3>
+              <h3 className="text-xl font-semibold text-[var(--foreground)] mb-2">FIND IT INSTANTLY</h3>
               <p className="text-[var(--muted)] text-sm leading-relaxed">
-                Search by meaning, not keywords. Find connections you never knew existed. Your second brain, fully wired.
+                Search by meaning, not exact keywords. Ask &quot;that restaurant idea from last summer&quot; and get it. MemoBot also surfaces connections between ideas you never noticed.
               </p>
             </div>
           </div>
@@ -193,39 +193,39 @@ export default function HomePage() {
             className="text-3xl md:text-4xl font-display tracking-widest text-[var(--foreground)] text-center mb-12"
             style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
           >
-            BUILT FOR HOW YOUR MIND ACTUALLY WORKS
+            EVERYTHING YOUR NOTES APP SHOULD HAVE BEEN
           </h2>
 
           <div className="grid gap-4 md:grid-cols-2">
             <div className="glitch-hover flex items-start gap-4 p-4 rounded border border-[var(--card-border)] bg-[var(--card)]">
               <span className="text-[var(--accent)] text-xl">&#9672;</span>
               <div>
-                <h4 className="font-semibold text-[var(--foreground)] mb-1">Text From Anywhere</h4>
-                <p className="text-sm text-[var(--muted)]">WhatsApp. Telegram. Web. Capture thoughts wherever you are.</p>
+                <h4 className="font-semibold text-[var(--foreground)] mb-1">Works Where You Already Are</h4>
+                <p className="text-sm text-[var(--muted)]">WhatsApp. Telegram. Web dashboard. Send text, photos, docs, or voice notes — no new app to learn.</p>
               </div>
             </div>
 
             <div className="glitch-hover flex items-start gap-4 p-4 rounded border border-[var(--card-border)] bg-[var(--card)]">
               <span className="text-[var(--accent)] text-xl">&#9672;</span>
               <div>
-                <h4 className="font-semibold text-[var(--foreground)] mb-1">Never Lose Context Again</h4>
-                <p className="text-sm text-[var(--muted)]">Our AI asks what you&apos;d forget to write down.</p>
+                <h4 className="font-semibold text-[var(--foreground)] mb-1">AI That Asks What You&apos;d Forget</h4>
+                <p className="text-sm text-[var(--muted)]">MemoBot prompts for context, emotion, and details — then auto-generates titles, summaries, categories, and tags.</p>
               </div>
             </div>
 
             <div className="glitch-hover flex items-start gap-4 p-4 rounded border border-[var(--card-border)] bg-[var(--card)]">
               <span className="text-[var(--accent)] text-xl">&#9672;</span>
               <div>
-                <h4 className="font-semibold text-[var(--foreground)] mb-1">Find It Like You Think It</h4>
-                <p className="text-sm text-[var(--muted)]">Search &quot;that startup idea from the beach trip&quot; and find it.</p>
+                <h4 className="font-semibold text-[var(--foreground)] mb-1">Search by Meaning, Not Keywords</h4>
+                <p className="text-sm text-[var(--muted)]">Ask &quot;that startup idea from the beach trip&quot; and find it instantly. Semantic search understands what you meant, not just what you typed.</p>
               </div>
             </div>
 
             <div className="glitch-hover flex items-start gap-4 p-4 rounded border border-[var(--card-border)] bg-[var(--card)]">
               <span className="text-[var(--accent)] text-xl">&#9672;</span>
               <div>
-                <h4 className="font-semibold text-[var(--foreground)] mb-1">See The Hidden Threads</h4>
-                <p className="text-sm text-[var(--muted)]">Discover surprising connections between your ideas.</p>
+                <h4 className="font-semibold text-[var(--foreground)] mb-1">Discover Hidden Connections</h4>
+                <p className="text-sm text-[var(--muted)]">MemoBot&apos;s relationship graph reveals links between ideas saved weeks or months apart — sparking insights you&apos;d never find manually.</p>
               </div>
             </div>
 
@@ -233,31 +233,15 @@ export default function HomePage() {
               <span className="text-[var(--accent)] text-xl">&#9672;</span>
               <div>
                 <h4 className="font-semibold text-[var(--foreground)] mb-1">Organized Without Organizing</h4>
-                <p className="text-sm text-[var(--muted)]">Auto-tagged. Auto-sorted. Zero effort.</p>
+                <p className="text-sm text-[var(--muted)]">Every memory is auto-categorized, auto-tagged, and searchable the moment you save it. Zero folders. Zero filing.</p>
               </div>
             </div>
 
             <div className="glitch-hover flex items-start gap-4 p-4 rounded border border-[var(--card-border)] bg-[var(--card)]">
               <span className="text-[var(--accent)] text-xl">&#9672;</span>
               <div>
-                <h4 className="font-semibold text-[var(--foreground)] mb-1">Your Vault. Your Keys.</h4>
-                <p className="text-sm text-[var(--muted)]">End-to-end encrypted. Only you see your memories.</p>
-              </div>
-            </div>
-
-            <div className="glitch-hover flex items-start gap-4 p-4 rounded border border-[var(--card-border)] bg-[var(--card)]">
-              <span className="text-[var(--accent)] text-xl">&#9672;</span>
-              <div>
-                <h4 className="font-semibold text-[var(--foreground)] mb-1">Attach Files, Not Friction</h4>
-                <p className="text-sm text-[var(--muted)]">Drop in photos, docs, or voice notes. Everything lives with your memory.</p>
-              </div>
-            </div>
-
-            <div className="glitch-hover flex items-start gap-4 p-4 rounded border border-[var(--card-border)] bg-[var(--card)]">
-              <span className="text-[var(--accent)] text-xl">&#9672;</span>
-              <div>
-                <h4 className="font-semibold text-[var(--foreground)] mb-1">Never Forget To Follow Up</h4>
-                <p className="text-sm text-[var(--muted)]">Your AI sets reminders automatically. Get nudged when it matters.</p>
+                <h4 className="font-semibold text-[var(--foreground)] mb-1">Private and Encrypted</h4>
+                <p className="text-sm text-[var(--muted)]">End-to-end encrypted storage. Your memories are yours alone — no training data, no third-party access, no exceptions.</p>
               </div>
             </div>
           </div>
@@ -271,13 +255,13 @@ export default function HomePage() {
             className="text-3xl md:text-4xl font-display tracking-widest text-[var(--foreground)] text-center mb-12"
             style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
           >
-            EARLY ADOPTERS ARE HOOKED
+            PEOPLE WHO NEVER LOSE IDEAS ANYMORE
           </h2>
 
           <div className="grid gap-6 md:grid-cols-3">
             <div className="card-dystopian glitch-hover p-6">
               <p className="text-[var(--muted)] text-sm leading-relaxed mb-4 italic">
-                &quot;I used to lose 10 ideas a day. Now they all go to MemoBot. It&apos;s like having a second brain that actually works.&quot;
+                &quot;I used to screenshot everything and forget where I put it. Now I text MemoBot and move on with my day. Three months in and I&apos;ve saved over 200 memories without thinking twice.&quot;
               </p>
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full bg-[var(--accent)]/20 flex items-center justify-center text-[var(--accent)] text-xs font-bold">
@@ -292,7 +276,7 @@ export default function HomePage() {
 
             <div className="card-dystopian glitch-hover p-6">
               <p className="text-[var(--muted)] text-sm leading-relaxed mb-4 italic">
-                &quot;The semantic search is insane. I found a connection between two ideas from 8 months apart. Game changer.&quot;
+                &quot;I searched &apos;that podcast guest who talked about pricing&apos; and MemoBot found a note from six months ago I&apos;d completely forgotten. The semantic search alone is worth it.&quot;
               </p>
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full bg-[var(--accent)]/20 flex items-center justify-center text-[var(--accent)] text-xs font-bold">
@@ -307,7 +291,7 @@ export default function HomePage() {
 
             <div className="card-dystopian glitch-hover p-6">
               <p className="text-[var(--muted)] text-sm leading-relaxed mb-4 italic">
-                &quot;Finally, a notes app that doesn&apos;t feel like work. I just text and forget about it. MemoBot remembers everything.&quot;
+                &quot;My team keeps asking how I always remember every detail from every meeting. I don&apos;t tell them it&apos;s just MemoBot on Telegram.&quot;
               </p>
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full bg-[var(--accent)]/20 flex items-center justify-center text-[var(--accent)] text-xs font-bold">
@@ -331,21 +315,21 @@ export default function HomePage() {
               className="text-3xl md:text-4xl font-display tracking-widest text-[var(--foreground)] mb-4"
               style={{ fontFamily: "var(--font-bebas-neue), sans-serif" }}
             >
-              STOP LOSING YOUR BEST IDEAS
+              YOUR NEXT GREAT IDEA IS 5 MINUTES AWAY
             </h2>
             <p className="text-[var(--muted)] mb-4 text-base md:text-lg">
-              Your next breakthrough idea could come in 5 minutes. Will you capture it — or watch it disappear?
+              You&apos;ll have another idea today. Maybe in the shower. Maybe on a walk. Maybe mid-meeting. This time, it takes one text to save it forever.
             </p>
             <p className="text-[var(--accent)] text-sm mb-8">
-              Start your 14-day free trial. No credit card required.
+              Free forever plan available. No credit card. No commitment.
             </p>
             <SignedOut>
               <div className="flex flex-col sm:flex-row gap-4 justify-center">
                 <Link href="/sign-up" className="btn-accent text-base py-3 px-8">
-                  START FREE TRIAL
+                  START FREE NOW
                 </Link>
-                <Link href="/sign-in" className="btn-outline text-base py-3 px-8">
-                  SEE PRICING
+                <Link href="/pricing" className="btn-outline text-base py-3 px-8">
+                  VIEW PRICING
                 </Link>
               </div>
             </SignedOut>
@@ -374,7 +358,7 @@ export default function HomePage() {
             </span>
           </div>
           <div className="text-xs text-[var(--muted-light)] tracking-wider">
-            <span className="text-[var(--accent)]">//</span> READY TO REMEMBER EVERYTHING
+            <span className="text-[var(--accent)]">//</span> CAPTURE EVERYTHING. FORGET NOTHING.
           </div>
         </div>
       </footer>
