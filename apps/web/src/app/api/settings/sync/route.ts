@@ -1,7 +1,8 @@
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { getUserSyncSettings } from "@/lib/services/sync";
+import { syncUserToSupabase } from "@/lib/sync-user";
 
 /**
  * GET /api/settings/sync — return sync settings for the current user.
@@ -33,6 +34,19 @@ export async function PATCH(request: Request) {
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  // Ensure user exists in database before writing settings
+  const user = await currentUser();
+  if (user) {
+    await syncUserToSupabase({
+      id: user.id,
+      email_addresses: user.emailAddresses?.map((e) => ({ email_address: e.emailAddress })),
+      first_name: user.firstName,
+      last_name: user.lastName,
+      image_url: user.imageUrl,
+    });
+  }
+
   let body: { local_backup_enabled?: boolean; local_backup_path?: string };
   try {
     body = await request.json();
