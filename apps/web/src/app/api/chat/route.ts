@@ -1,9 +1,10 @@
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateSession, updateSessionHistory } from "@/lib/services/session";
 import { processMessage, type AttachmentInfo } from "@/agent/orchestrator";
 import { getAttachmentById } from "@/lib/services/attachment";
 import { withRateLimit } from "@/lib/api-utils";
+import { syncUserToSupabase } from "@/lib/sync-user";
 
 /**
  * POST /api/chat — Web chat endpoint for MemoBot.
@@ -14,6 +15,18 @@ async function handlePost(request: NextRequest) {
   const { userId } = await auth();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Ensure user exists in database before creating session
+  const user = await currentUser();
+  if (user) {
+    await syncUserToSupabase({
+      id: user.id,
+      email_addresses: user.emailAddresses?.map((e) => ({ email_address: e.emailAddress })),
+      first_name: user.firstName,
+      last_name: user.lastName,
+      image_url: user.imageUrl,
+    });
   }
 
   try {

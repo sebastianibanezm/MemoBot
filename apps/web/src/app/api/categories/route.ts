@@ -1,7 +1,8 @@
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { generateEmbedding } from "@/lib/services/embedding";
+import { syncUserToSupabase } from "@/lib/sync-user";
 
 /** Valid neon colors for categories */
 export const NEON_COLORS = [
@@ -52,6 +53,18 @@ export async function POST(request: Request) {
   const { userId } = await auth();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Ensure user exists in database before creating category
+  const user = await currentUser();
+  if (user) {
+    await syncUserToSupabase({
+      id: user.id,
+      email_addresses: user.emailAddresses?.map((e) => ({ email_address: e.emailAddress })),
+      first_name: user.firstName,
+      last_name: user.lastName,
+      image_url: user.imageUrl,
+    });
   }
 
   try {

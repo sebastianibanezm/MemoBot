@@ -4,9 +4,10 @@
  * Returns: { attachment: AttachmentRow }
  */
 
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import { uploadAttachment, type AttachmentRow } from "@/lib/services/attachment";
+import { syncUserToSupabase } from "@/lib/sync-user";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
@@ -31,6 +32,18 @@ export async function POST(request: NextRequest) {
   const { userId } = await auth();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Ensure user exists in database before creating attachment
+  const user = await currentUser();
+  if (user) {
+    await syncUserToSupabase({
+      id: user.id,
+      email_addresses: user.emailAddresses?.map((e) => ({ email_address: e.emailAddress })),
+      first_name: user.firstName,
+      last_name: user.lastName,
+      image_url: user.imageUrl,
+    });
   }
 
   try {

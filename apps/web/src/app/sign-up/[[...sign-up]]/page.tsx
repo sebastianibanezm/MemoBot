@@ -29,7 +29,7 @@ export default function SignUpPage() {
 
       {/* Clerk Sign Up */}
       <SignUp
-        afterSignUpUrl="/dashboard"
+        fallbackRedirectUrl="/dashboard"
         signInUrl="/sign-in"
       />
 
