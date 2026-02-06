@@ -120,9 +120,18 @@ export default async function DashboardLayout({
 
       {/* Footer Status Bar */}
       <footer className="fixed bottom-0 left-0 right-0 bg-[var(--background-alt)] border-t border-[var(--card-border)] px-4 py-2 flex items-center justify-between text-xs text-[var(--muted)] tracking-wider z-50">
-        <span>
-          <span className="text-[var(--accent)]">&gt;</span> MEMORY_VAULT.ACTIVE
-        </span>
+        <div className="flex items-center gap-2">
+          <Image
+            src="/images/MemoBot_logo.png"
+            alt="MemoBot Logo"
+            width={20}
+            height={20}
+            className="rounded"
+          />
+          <span>
+            <span className="text-[var(--accent)]">&gt;</span> MEMORY_VAULT.ACTIVE
+          </span>
+        </div>
         <span className="opacity-60">
           SYS.UPTIME: NOMINAL
         </span>
