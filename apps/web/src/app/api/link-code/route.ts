@@ -1,13 +1,16 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import { generateLinkCode } from "@/lib/services/account-linking";
+import { sendWhatsAppVerificationCode } from "@/lib/services/whatsapp";
 import { withRateLimit } from "@/lib/api-utils";
 
 const PLATFORMS = ["whatsapp", "telegram"] as const;
 
 /**
  * POST /api/link-code
- * Body: { platform: "whatsapp" | "telegram" }
+ * Body: { platform: "whatsapp" | "telegram", phoneNumber?: string }
+ * For WhatsApp: phoneNumber is required. Generates code and sends it via WhatsApp.
+ * For Telegram: generates code for manual entry.
  * Returns: { code: string } (6-digit code, valid 10 min)
  * Requires Clerk auth.
  */
@@ -17,7 +20,7 @@ async function handlePost(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  let body: { platform?: string };
+  let body: { platform?: string; phoneNumber?: string };
   try {
     body = await request.json();
   } catch {
@@ -38,6 +41,43 @@ async function handlePost(request: NextRequest) {
     );
   }
 
+  // For WhatsApp, require a phone number
+  if (platform === "whatsapp") {
+    const phoneNumber = body.phoneNumber?.trim();
+    if (!phoneNumber) {
+      return NextResponse.json(
+        { error: "Phone number is required for WhatsApp" },
+        { status: 400 }
+      );
+    }
+
+    // Basic phone number validation: digits only (after stripping non-digits), at least 7 digits
+    const digits = phoneNumber.replace(/\D/g, "");
+    if (digits.length < 7 || digits.length > 15) {
+      return NextResponse.json(
+        { error: "Please enter a valid phone number with country code (e.g. +1234567890)" },
+        { status: 400 }
+      );
+    }
+
+    try {
+      const code = await generateLinkCode(userId, "whatsapp");
+      // Send verification code via WhatsApp
+      await sendWhatsAppVerificationCode(digits, code);
+      return NextResponse.json({ code, sent: true });
+    } catch (e) {
+      console.error("[link-code] WhatsApp generate/send failed:", e);
+      const message = e instanceof Error ? e.message : "Failed to send verification code";
+      return NextResponse.json(
+        { error: message.includes("sendMessage failed") 
+            ? "Failed to send WhatsApp message. Please check the phone number and try again." 
+            : "Failed to generate link code" },
+        { status: 500 }
+      );
+    }
+  }
+
+  // For Telegram (and future platforms), generate code only
   try {
     const code = await generateLinkCode(userId, platform as "whatsapp" | "telegram");
     return NextResponse.json({ code });

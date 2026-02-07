@@ -23,6 +23,9 @@ interface SubscriptionInfo {
 export default function SettingsPage() {
   const searchParams = useSearchParams();
   const [whatsappCode, setWhatsappCode] = useState<string | null>(null);
+  const [whatsappPhone, setWhatsappPhone] = useState("");
+  const [whatsappSent, setWhatsappSent] = useState(false);
+  const [whatsappError, setWhatsappError] = useState<string | null>(null);
   const [telegramCode, setTelegramCode] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [linkedAccounts, setLinkedAccounts] = useState<PlatformLink[]>([]);
@@ -115,7 +118,34 @@ export default function SettingsPage() {
     }
   };
 
-  const generateCode = async (platform: "whatsapp" | "telegram") => {
+  const connectWhatsApp = async () => {
+    if (!whatsappPhone.trim()) {
+      setWhatsappError("Please enter your phone number");
+      return;
+    }
+    setGenerating("whatsapp");
+    setWhatsappError(null);
+    try {
+      const res = await fetch("/api/link-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform: "whatsapp", phoneNumber: whatsappPhone }),
+      });
+      const data = await res.json();
+      if (res.ok && data.code) {
+        setWhatsappCode(data.code);
+        setWhatsappSent(true);
+      } else {
+        setWhatsappError(data.error || "Failed to send verification code");
+      }
+    } catch {
+      setWhatsappError("Network error. Please try again.");
+    } finally {
+      setGenerating(null);
+    }
+  };
+
+  const generateCode = async (platform: "telegram") => {
     setGenerating(platform);
     try {
       const res = await fetch("/api/link-code", {
@@ -125,8 +155,7 @@ export default function SettingsPage() {
       });
       const data = await res.json();
       if (res.ok && data.code) {
-        if (platform === "whatsapp") setWhatsappCode(data.code);
-        else setTelegramCode(data.code);
+        setTelegramCode(data.code);
       }
     } finally {
       setGenerating(null);
@@ -316,9 +345,7 @@ export default function SettingsPage() {
             LINK MESSAGING ACCOUNTS
           </h2>
           <p className="text-[var(--muted)] text-sm mb-4">
-            <span className="text-[var(--accent)]">//</span> Generate a 6-digit code, then send{" "}
-            <code className="text-[var(--accent-dark)] bg-[var(--card)] px-1 rounded">LINK &lt;code&gt;</code>{" "}
-            to MemoBot on WhatsApp or Telegram.
+            <span className="text-[var(--accent)]">//</span> Connect your messaging accounts to use MemoBot on WhatsApp or Telegram.
           </p>
 
           {/* WhatsApp */}
@@ -327,25 +354,51 @@ export default function SettingsPage() {
               <span className="text-[var(--accent)] font-mono text-sm">//WA</span>
               <h3 className="text-lg font-medium text-[var(--foreground)]">WhatsApp</h3>
             </div>
-            {!whatsappCode ? (
-              <button
-                type="button"
-                onClick={() => generateCode("whatsapp")}
-                disabled={!!generating}
-                className="btn-outline text-sm disabled:opacity-50"
-              >
-                {generating === "whatsapp" ? "GENERATING..." : "GENERATE LINK CODE"}
-              </button>
-            ) : (
+            {!whatsappSent ? (
               <div className="space-y-3">
                 <p className="text-sm text-[var(--muted)]">
-                  Send this message to MemoBot on WhatsApp:
+                  Enter your phone number with country code to receive a verification message on WhatsApp.
                 </p>
+                <div className="flex gap-2">
+                  <input
+                    type="tel"
+                    value={whatsappPhone}
+                    onChange={(e) => {
+                      setWhatsappPhone(e.target.value);
+                      setWhatsappError(null);
+                    }}
+                    placeholder="+1 234 567 8900"
+                    className="flex-1 px-3 py-2 rounded border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] placeholder:text-[var(--muted-light)] focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)] transition-colors font-mono text-sm"
+                    disabled={generating === "whatsapp"}
+                  />
+                  <button
+                    type="button"
+                    onClick={connectWhatsApp}
+                    disabled={!!generating || !whatsappPhone.trim()}
+                    className="btn-accent text-sm disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {generating === "whatsapp" ? "SENDING..." : "CONNECT"}
+                  </button>
+                </div>
+                {whatsappError && (
+                  <p className="text-xs text-red-400">{whatsappError}</p>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="p-3 rounded bg-green-500/10 border border-green-500/30">
+                  <p className="text-sm text-green-400 font-medium">
+                    Verification message sent to {whatsappPhone}
+                  </p>
+                  <p className="text-xs text-[var(--muted)] mt-1">
+                    Check your WhatsApp and reply to the message with the code below to complete the connection.
+                  </p>
+                </div>
                 <div className="flex items-center gap-2 p-3 rounded bg-[var(--background-alt)] border border-[var(--card-border)] font-mono text-[var(--accent)]">
                   <span>LINK {whatsappCode}</span>
                   <button
                     type="button"
-                    onClick={() => copyCode(whatsappCode, "whatsapp")}
+                    onClick={() => copyCode(whatsappCode!, "whatsapp")}
                     className="ml-auto px-2 py-1 rounded hover:bg-[var(--accent-muted)] transition-colors text-xs"
                     title="Copy"
                   >
@@ -353,6 +406,17 @@ export default function SettingsPage() {
                   </button>
                 </div>
                 <p className="text-xs text-[var(--muted-light)]">Code expires in 10 minutes</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWhatsappSent(false);
+                    setWhatsappCode(null);
+                    setWhatsappPhone("");
+                  }}
+                  className="text-xs text-[var(--muted)] hover:text-[var(--foreground)] transition-colors underline"
+                >
+                  Use a different number
+                </button>
               </div>
             )}
           </div>
