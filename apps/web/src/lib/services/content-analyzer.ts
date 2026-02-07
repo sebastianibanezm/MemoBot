@@ -13,6 +13,10 @@ import OpenAI from "openai";
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 const PDF_TYPES = ["application/pdf"];
 const TEXT_TYPES = ["text/plain", "text/markdown"];
+const DOCX_TYPES = [
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/msword",
+];
 
 // Vision model for image analysis
 const VISION_MODEL = "gpt-4o-mini";
@@ -56,6 +60,10 @@ export async function analyzeFileContent(
 
     if (TEXT_TYPES.includes(normalizedMime)) {
       return analyzeTextFile(buffer);
+    }
+
+    if (DOCX_TYPES.includes(normalizedMime)) {
+      return await analyzeDocx(buffer, fileName);
     }
 
     // Unsupported file type - still store but can't extract content
@@ -225,6 +233,59 @@ function analyzeTextFile(buffer: Buffer): AnalysisResult {
 }
 
 /**
+ * Extract text from .doc/.docx using mammoth.
+ */
+async function analyzeDocx(
+  buffer: Buffer,
+  fileName: string
+): Promise<AnalysisResult> {
+  console.log(
+    `[content-analyzer] Parsing DOCX: ${fileName} (${buffer.length} bytes)`
+  );
+
+  try {
+    const mammoth = await import("mammoth");
+    const result = await mammoth.extractRawText({ buffer });
+
+    const text = result.value?.trim();
+
+    if (!text) {
+      return {
+        content: null,
+        status: "failed",
+        error: "No text content found in document",
+      };
+    }
+
+    // Truncate very long documents
+    const maxLength = 10000;
+    const truncatedText =
+      text.length > maxLength
+        ? text.slice(0, maxLength) + "\n\n[Content truncated...]"
+        : text;
+
+    console.log(
+      `[content-analyzer] DOCX parsed: ${text.length} chars`
+    );
+
+    return {
+      content: truncatedText,
+      status: "completed",
+    };
+  } catch (error) {
+    console.error(
+      "[content-analyzer] DOCX parsing failed:",
+      error instanceof Error ? error.message : error
+    );
+    return {
+      content: null,
+      status: "failed",
+      error: `Failed to parse document: ${error instanceof Error ? error.message : "Unknown error"}`,
+    };
+  }
+}
+
+/**
  * Check if a MIME type is supported for content extraction.
  */
 export function isAnalyzableType(mimeType: string): boolean {
@@ -232,7 +293,8 @@ export function isAnalyzableType(mimeType: string): boolean {
   return (
     IMAGE_TYPES.includes(normalized) ||
     PDF_TYPES.includes(normalized) ||
-    TEXT_TYPES.includes(normalized)
+    TEXT_TYPES.includes(normalized) ||
+    DOCX_TYPES.includes(normalized)
   );
 }
 

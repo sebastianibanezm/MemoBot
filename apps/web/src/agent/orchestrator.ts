@@ -256,9 +256,12 @@ export async function processMessage(
   
   // If there's an attachment, include its context in the message
   if (attachment) {
-    const attachmentContext = attachment.extractedContent
-      ? `\n\n[Attached file: "${attachment.fileName}" (${attachment.fileType}). Extracted content: ${attachment.extractedContent}]`
-      : `\n\n[Attached file: "${attachment.fileName}" (${attachment.fileType})]`;
+    let attachmentContext: string;
+    if (attachment.extractedContent) {
+      attachmentContext = `\n\n[Attached file: "${attachment.fileName}" (${attachment.fileType}). Extracted content:\n${attachment.extractedContent}]`;
+    } else {
+      attachmentContext = `\n\n[Attached file: "${attachment.fileName}" (${attachment.fileType}). Content extraction was not available for this file type. The file has been uploaded and will be linked to the memory, but you should tell the user you couldn't read the file's contents.]`;
+    }
     effectiveMessage = userMessage + attachmentContext;
   }
   
