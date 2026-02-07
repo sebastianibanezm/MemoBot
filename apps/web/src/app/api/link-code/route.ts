@@ -62,18 +62,21 @@ async function handlePost(request: NextRequest) {
 
     try {
       const code = await generateLinkCode(userId, "whatsapp");
-      // Send verification code via WhatsApp
+      // Send verification code via WhatsApp template message
       await sendWhatsAppVerificationCode(digits, code);
       return NextResponse.json({ code, sent: true });
     } catch (e) {
       console.error("[link-code] WhatsApp generate/send failed:", e);
-      const message = e instanceof Error ? e.message : "Failed to send verification code";
-      return NextResponse.json(
-        { error: message.includes("sendMessage failed") 
-            ? "Failed to send WhatsApp message. Please check the phone number and try again." 
-            : "Failed to generate link code" },
-        { status: 500 }
-      );
+      const errMsg = e instanceof Error ? e.message : "Unknown error";
+
+      let userError = "Failed to generate link code";
+      if (errMsg.includes("WHATSAPP_VERIFICATION_TEMPLATE not set")) {
+        userError = "WhatsApp verification is not configured. Please contact support.";
+      } else if (errMsg.includes("sendMessage failed")) {
+        userError = "Failed to send WhatsApp message. Please check the phone number and try again.";
+      }
+
+      return NextResponse.json({ error: userError }, { status: 500 });
     }
   }
 

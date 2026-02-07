@@ -11,7 +11,7 @@ import {
 } from "./content-analyzer";
 
 const STORAGE_BUCKET = "memory-attachments";
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4MB (Vercel Hobby has 4.5MB body limit)
 
 // Track if bucket has been verified to exist
 let bucketVerified = false;
@@ -40,7 +40,7 @@ async function ensureBucketExists(): Promise<void> {
     console.log(`[attachment] Creating storage bucket: ${STORAGE_BUCKET}`);
     const { error: createError } = await supabase.storage.createBucket(STORAGE_BUCKET, {
       public: false,
-      fileSizeLimit: MAX_FILE_SIZE,
+      fileSizeLimit: 10 * 1024 * 1024, // 10MB bucket limit (Vercel body limit is the real constraint)
       allowedMimeTypes: [
         "image/jpeg",
         "image/png",

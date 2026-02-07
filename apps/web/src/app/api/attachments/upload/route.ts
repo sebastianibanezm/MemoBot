@@ -9,7 +9,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { uploadAttachment, type AttachmentRow } from "@/lib/services/attachment";
 import { syncUserToSupabase } from "@/lib/sync-user";
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+// Vercel Hobby plan has a 4.5MB request body limit.
+// Set file limit to 4MB to leave headroom for form-data overhead.
+const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4MB
+
+// Allow up to 60s for upload + AI analysis (default is 10s on Hobby)
+export const maxDuration = 60;
 
 const ALLOWED_TYPES = [
   "image/jpeg",

@@ -6,6 +6,9 @@
  * and file attachments (images, documents, videos).
  */
 
+// Allow up to 60s for AI processing + media downloads (default is 10s on Hobby)
+export const maxDuration = 60;
+
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
 import { processIncomingMessage } from "@/lib/message-router";
@@ -222,7 +225,7 @@ interface WhatsAppWebhookPayload {
         messages?: Array<{
           from?: string;
           id?: string;
-          type?: string;  // "text" | "interactive" | "audio" | "image" | "document" | "video"
+          type?: string;  // "text" | "interactive" | "button" | "audio" | "image" | "document" | "video"
           text?: { body?: string };
           interactive?: {
             type?: string;  // "button_reply"
@@ -230,6 +233,10 @@ interface WhatsAppWebhookPayload {
               id?: string;    // e.g., "save_memory", "create_reminder"
               title?: string;
             };
+          };
+          button?: {
+            text?: string;    // Button label (e.g., "Connect Account")
+            payload?: string; // Dynamic payload set at send time (e.g., "LINK 123456")
           };
           audio?: {
             id?: string;        // Media ID to download the audio file
@@ -407,6 +414,10 @@ export async function POST(request: NextRequest) {
           buttonId = msg.interactive.button_reply.id;
           text = msg.interactive.button_reply.title ?? "";
           console.log(`[WhatsApp] Button clicked: ${buttonId} ("${text}")`);
+        } else if (msg.type === "button" && msg.button?.payload) {
+          // Template quick reply button — payload contains the command (e.g. "LINK 123456")
+          text = msg.button.payload;
+          console.log(`[WhatsApp] Template button clicked: "${msg.button.text}" → payload: "${text}"`);
         } else if (msg.type === "audio" && msg.audio?.id) {
           // Handle voice note: download and transcribe
           console.log(`[WhatsApp] Voice note received from ${from}, media ID: ${msg.audio.id}`);

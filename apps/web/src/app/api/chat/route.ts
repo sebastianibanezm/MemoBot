@@ -6,6 +6,9 @@ import { getAttachmentById } from "@/lib/services/attachment";
 import { withRateLimit } from "@/lib/api-utils";
 import { syncUserToSupabase } from "@/lib/sync-user";
 
+// Allow up to 60s for AI processing (default is 10s on Hobby)
+export const maxDuration = 60;
+
 /**
  * POST /api/chat — Web chat endpoint for MemoBot.
  * Body: { message: string, attachmentIds?: string[] }

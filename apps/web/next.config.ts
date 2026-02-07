@@ -26,7 +26,9 @@ try {
 }
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // pdf-parse uses require("./test/data") at startup which breaks bundlers.
+  // Marking it as external keeps the original node_modules version at runtime.
+  serverExternalPackages: ["pdf-parse"],
 };
 
 export default nextConfig;

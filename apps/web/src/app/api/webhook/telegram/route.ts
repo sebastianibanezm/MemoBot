@@ -5,6 +5,9 @@
  * and file attachments (images, documents, videos).
  */
 
+// Allow up to 60s for AI processing + media downloads (default is 10s on Hobby)
+export const maxDuration = 60;
+
 import { NextRequest, NextResponse } from "next/server";
 import { processIncomingMessage } from "@/lib/message-router";
 import { transcribeAudio } from "@/lib/services/transcription";
