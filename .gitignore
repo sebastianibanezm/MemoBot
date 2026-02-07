@@ -20,6 +20,7 @@ build/
 .env.local
 .env.production
 .env*.local
+.env.production.template
 
 # IDE
 .idea/
